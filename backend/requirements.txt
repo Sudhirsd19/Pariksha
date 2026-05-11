@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pandas
+# pandas_ta removed for compatibility
+smartapi-python
+python-dotenv
+pydantic
+websockets
+requests
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+aiohttp
+pyotp
