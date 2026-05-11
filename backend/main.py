@@ -8,21 +8,21 @@ from datetime import datetime, time as dt_time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from config.config import config
-from engines.cooldown_engine import CooldownEngine
-from execution.broker_api import AngelOneBroker
-from indicators.technical_indicators import TechnicalIndicators
-from market_stream.socket_manager import MarketWebSocket
-from risk_management.risk_manager import RiskManager
-from signal_engine.signal_engine import SignalEngine
-from utils.historical_data import fetch_historical_data
-from utils.token_manager import token_manager
-from config.firebase_config import init_firebase
-from utils.db_manager import db_manager
-from utils.trade_manager import trade_manager
+from backend.config.config import config
+from backend.engines.cooldown_engine import CooldownEngine
+from backend.execution.broker_api import AngelOneBroker
+from backend.indicators.technical_indicators import TechnicalIndicators
+from backend.market_stream.socket_manager import MarketWebSocket
+from backend.risk_management.risk_manager import RiskManager
+from backend.signal_engine.signal_engine import SignalEngine
+from backend.utils.historical_data import fetch_historical_data
+from backend.utils.token_manager import token_manager
+from backend.config.firebase_config import init_firebase
+from backend.utils.db_manager import db_manager
+from backend.utils.trade_manager import trade_manager
 from firebase_admin import messaging
-from safety.health_monitor import health_monitor
-from utils.persistence_manager import persistence_manager
+from backend.safety.health_monitor import health_monitor
+from backend.utils.persistence_manager import persistence_manager
 
 app = FastAPI(title="QuantumIndex Algo-Trading System")
 
