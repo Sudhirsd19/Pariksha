@@ -1,5 +1,5 @@
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
-from config.config import config
+from backend.config.config import config
 import pandas as pd
 from datetime import datetime
 import json
@@ -60,4 +60,5 @@ class MarketDataWebSocket:
         self.sws.on_error = self.on_error
         self.sws.on_close = self.on_close
         self.sws.connect()
+
 

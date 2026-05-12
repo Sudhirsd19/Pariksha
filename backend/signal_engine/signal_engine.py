@@ -1,10 +1,10 @@
-from engines.trend_engine import TrendEngine
-from engines.structure_engine import StructureEngine
-from engines.liquidity_engine import LiquidityEngine
-from engines.volume_engine import VolumeEngine
-from engines.momentum_engine import MomentumEngine
-from engines.regime_engine import RegimeEngine
-from filters.filters import SessionFilter, VolatilityFilter
+from backend.engines.trend_engine import TrendEngine
+from backend.engines.structure_engine import StructureEngine
+from backend.engines.liquidity_engine import LiquidityEngine
+from backend.engines.volume_engine import VolumeEngine
+from backend.engines.momentum_engine import MomentumEngine
+from backend.engines.regime_engine import RegimeEngine
+from backend.filters.filters import SessionFilter, VolatilityFilter
 
 class SignalEngine:
     def __init__(self):
@@ -91,4 +91,5 @@ class SignalEngine:
             }
         
         return {"signal": "NO TRADE", "score": score, "reason": f"Low Quality Setup (Score: {score}/9)"}
+
 

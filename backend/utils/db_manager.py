@@ -1,4 +1,4 @@
-from config.firebase_config import get_db
+from backend.config.firebase_config import get_db
 import time
 from datetime import datetime, timezone
 
@@ -99,4 +99,5 @@ class DatabaseManager:
             print(f"Error saving daily PnL to DB: {e}")
 
 db_manager = DatabaseManager()
+
 

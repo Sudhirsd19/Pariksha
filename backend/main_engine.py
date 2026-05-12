@@ -1,9 +1,9 @@
 import time
-from engines.structure_engine import StructureEngine
-from engines.signal_engine import SignalEngine
-from engines.risk_engine import RiskEngine
-from engines.execution_engine import ExecutionEngine
-from engines.analytics_engine import AnalyticsEngine
+from backend.engines.structure_engine import StructureEngine
+from backend.engines.signal_engine import SignalEngine
+from backend.engines.risk_engine import RiskEngine
+from backend.engines.execution_engine import ExecutionEngine
+from backend.engines.analytics_engine import AnalyticsEngine
 
 class QuantumIndexMain:
     def __init__(self):
@@ -77,3 +77,4 @@ if __name__ == "__main__":
     engine = QuantumIndexMain()
     # In production, this would be inside a WebSocket or polling loop
     print("QuantumIndex Main Engine Initialized.")
+

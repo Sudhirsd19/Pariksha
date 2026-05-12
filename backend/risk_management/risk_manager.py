@@ -1,4 +1,4 @@
-from config.config import config
+from backend.config.config import config
 
 class RiskManager:
     def __init__(self, initial_capital=10000):
@@ -52,7 +52,7 @@ class RiskManager:
         raw_quantity = int(total_risk / risk_per_share)
         
         # Get correct lot size from token_manager (2026: Nifty=65, BankNifty=30)
-        from utils.token_manager import token_manager
+        from backend.utils.token_manager import token_manager
         lot_size = token_manager.get_lotsize(symbol)
         
         # Round down to nearest lot
@@ -85,3 +85,4 @@ class RiskManager:
         self.consecutive_losses = 0
         self.long_exposure = 0
         self.short_exposure = 0
+

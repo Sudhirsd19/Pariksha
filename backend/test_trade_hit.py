@@ -3,8 +3,8 @@ import sys
 import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config.firebase_config import init_firebase
-from utils.db_manager import db_manager
+from backend.config.firebase_config import init_firebase
+from backend.utils.db_manager import db_manager
 
 init_firebase()
 
@@ -26,3 +26,4 @@ print("Pushing tight-range trade to Firestore...")
 doc_id = db_manager.save_signal(mock_signal)
 print(f"Trade added with ID: {doc_id}")
 print("Please check your Flutter App's Dashboard. It will move to PnL screen once it hits SL/TP.")
+

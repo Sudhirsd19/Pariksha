@@ -3,8 +3,8 @@ import sys
 import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config.firebase_config import init_firebase
-from utils.db_manager import db_manager
+from backend.config.firebase_config import init_firebase
+from backend.utils.db_manager import db_manager
 
 # Initialize firebase for this script
 init_firebase()
@@ -24,3 +24,4 @@ mock_signal = {
 print("Pushing test signal to Firestore...")
 db_manager.save_signal(mock_signal)
 print("Done!")
+

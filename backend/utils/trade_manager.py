@@ -1,5 +1,5 @@
-from utils.persistence_manager import persistence_manager
-from utils.db_manager import db_manager
+from backend.utils.persistence_manager import persistence_manager
+from backend.utils.db_manager import db_manager
 import time
 import threading
 
@@ -231,3 +231,4 @@ class TradeManager:
         db_manager.save_pnl_data(analytics_data)
 
 trade_manager = TradeManager()
+

@@ -12,7 +12,7 @@ import numpy as np
 print("\n" + "="*50)
 print("TEST 1: Technical Indicators")
 print("="*50)
-from indicators.technical_indicators import TechnicalIndicators
+from backend.indicators.technical_indicators import TechnicalIndicators
 
 # Generate dummy OHLCV data
 np.random.seed(42)
@@ -42,7 +42,7 @@ else:
 print("\n" + "="*50)
 print("TEST 2: Trend Engine")
 print("="*50)
-from engines.trend_engine import TrendEngine
+from backend.engines.trend_engine import TrendEngine
 te = TrendEngine()
 trend = te.analyze(df)
 print(f"  OK Trend result: '{trend}' (Expected: Bullish/Bearish/Neutral)")
@@ -51,7 +51,7 @@ print(f"  OK Trend result: '{trend}' (Expected: Bullish/Bearish/Neutral)")
 print("\n" + "="*50)
 print("TEST 3: Structure Engine (BOS + FVG)")
 print("="*50)
-from engines.structure_engine import StructureEngine
+from backend.engines.structure_engine import StructureEngine
 se = StructureEngine()
 struct = se.analyze(df.copy())
 print(f"  OK BOS = '{struct['bos']}', FVGs found = {len(struct['fvgs'])}")
@@ -62,7 +62,7 @@ if struct['bos'] is None:
 print("\n" + "="*50)
 print("TEST 4: Momentum Engine (RSI)")
 print("="*50)
-from engines.momentum_engine import MomentumEngine
+from backend.engines.momentum_engine import MomentumEngine
 me = MomentumEngine()
 mom = me.analyze(df)
 print(f"  OK RSI={mom['rsi']:.1f}, Strength='{mom['strength']}', Rising={mom['rising']}")
@@ -71,7 +71,7 @@ print(f"  OK RSI={mom['rsi']:.1f}, Strength='{mom['strength']}', Rising={mom['ri
 print("\n" + "="*50)
 print("TEST 5: Volume Engine (VWAP + Spike)")
 print("="*50)
-from engines.volume_engine import VolumeEngine
+from backend.engines.volume_engine import VolumeEngine
 ve = VolumeEngine()
 vol = ve.analyze(df)
 print(f"  OK Strength='{vol['strength']}', VWAP Status='{vol['vwap_status']}', Spike={vol['volume_spike']}")
@@ -80,7 +80,7 @@ print(f"  OK Strength='{vol['strength']}', VWAP Status='{vol['vwap_status']}', S
 print("\n" + "="*50)
 print("TEST 6: Liquidity Engine (Equal H/L + Sweep)")
 print("="*50)
-from engines.liquidity_engine import LiquidityEngine
+from backend.engines.liquidity_engine import LiquidityEngine
 le = LiquidityEngine()
 liq = le.analyze(df)
 print(f"  OK Eq Highs={len(liq['eq_highs'])}, Eq Lows={len(liq['eq_lows'])}, Sweep='{liq['sweep']}'")
@@ -89,7 +89,7 @@ print(f"  OK Eq Highs={len(liq['eq_highs'])}, Eq Lows={len(liq['eq_lows'])}, Swe
 print("\n" + "="*50)
 print("TEST 7: Signal Engine (Full Pipeline)")
 print("="*50)
-from signal_engine.signal_engine import SignalEngine
+from backend.signal_engine.signal_engine import SignalEngine
 sig_engine = SignalEngine()
 
 # Test with bullish setup
@@ -105,7 +105,7 @@ if 'entry' in signal:
 print("\n" + "="*50)
 print("TEST 8: Risk Manager")
 print("="*50)
-from risk_management.risk_manager import RiskManager
+from backend.risk_management.risk_manager import RiskManager
 rm = RiskManager(initial_capital=10000)
 
 qty = rm.calculate_position_size(24000, 23960, "NIFTY")
@@ -121,7 +121,7 @@ print(f"  OK Can Trade = {can}")
 print("\n" + "="*50)
 print("TEST 9: Session Filter")
 print("="*50)
-from filters.filters import SessionFilter, VolatilityFilter
+from backend.filters.filters import SessionFilter, VolatilityFilter
 sess = SessionFilter.is_within_session()
 print(f"  OK Session Active = {sess} (Paper trading mode = True = always allowed)")
 
@@ -132,3 +132,4 @@ print(f"  OK Volatility OK = {vol_ok}")
 print("\n" + "="*50)
 print("OK ALL TESTS PASSED - Logic is Correct")
 print("="*50)
+

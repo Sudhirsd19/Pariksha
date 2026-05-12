@@ -3,14 +3,14 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/..")
 
-from execution.broker_api import AngelOneBroker
-from utils.historical_data import fetch_historical_data
-from indicators.technical_indicators import TechnicalIndicators
-from engines.trend_engine import TrendEngine
-from engines.momentum_engine import MomentumEngine
-from engines.structure_engine import StructureEngine
-from signal_engine.signal_engine import SignalEngine
-from filters.filters import SessionFilter
+from backend.execution.broker_api import AngelOneBroker
+from backend.utils.historical_data import fetch_historical_data
+from backend.indicators.technical_indicators import TechnicalIndicators
+from backend.engines.trend_engine import TrendEngine
+from backend.engines.momentum_engine import MomentumEngine
+from backend.engines.structure_engine import StructureEngine
+from backend.signal_engine.signal_engine import SignalEngine
+from backend.filters.filters import SessionFilter
 
 def deep_diagnostic():
     print("=== DEEP SIGNAL DIAGNOSTIC ===\n")
@@ -67,3 +67,4 @@ def deep_diagnostic():
 
 if __name__ == "__main__":
     deep_diagnostic()
+

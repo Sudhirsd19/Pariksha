@@ -1,5 +1,5 @@
 from SmartApi import SmartConnect
-from config.config import config
+from backend.config.config import config
 import pyotp
 
 class AngelOneBroker:
@@ -9,7 +9,7 @@ class AngelOneBroker:
 
     def login(self):
         """
-        Authenticate with Angel One using credentials from config.
+        Authenticate with Angel One using credentials from backend.config.
         """
         if not config.ANGEL_PIN or config.ANGEL_PIN == "your_mpin_here":
             print("ERROR: Please set your ANGEL_PIN (MPIN) in the .env file.")
@@ -119,3 +119,4 @@ class AngelOneBroker:
         except Exception as e:
             print(f"ERROR during square off: {e}")
         return False
+

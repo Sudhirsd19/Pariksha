@@ -1,5 +1,5 @@
-from execution.broker_api import AngelOneBroker
-from config.config import config
+from backend.execution.broker_api import AngelOneBroker
+from backend.config.config import config
 
 def test_login():
     print("--- Angel One Login Test ---")
@@ -16,3 +16,4 @@ def test_login():
 
 if __name__ == "__main__":
     test_login()
+

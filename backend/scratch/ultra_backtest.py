@@ -6,11 +6,11 @@ from datetime import datetime, timedelta
 # Add parent dir to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from execution.broker_api import AngelOneBroker
-from signal_engine.signal_engine import SignalEngine
-from indicators.technical_indicators import TechnicalIndicators
-from utils.historical_data import fetch_historical_data
-from utils.token_manager import token_manager
+from backend.execution.broker_api import AngelOneBroker
+from backend.signal_engine.signal_engine import SignalEngine
+from backend.indicators.technical_indicators import TechnicalIndicators
+from backend.utils.historical_data import fetch_historical_data
+from backend.utils.token_manager import token_manager
 
 def run_backtest():
     broker = AngelOneBroker()
@@ -82,3 +82,4 @@ def run_backtest():
 
 if __name__ == "__main__":
     run_backtest()
+

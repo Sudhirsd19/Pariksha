@@ -1,11 +1,11 @@
 from datetime import datetime, time
 import pandas as pd
-from config.config import config
+from backend.config.config import config
 
 class SessionFilter:
     @staticmethod
     def is_within_session() -> bool:
-        from config.config import config
+        from backend.config.config import config
         
         # Allow trading outside hours ONLY in paper trading mode
         if config.PAPER_TRADING:
@@ -45,3 +45,4 @@ class VolatilityFilter:
         if not is_volatile:
             print(f"[VolatilityFilter] BLOCKED: ATR={last_atr:.2f}, Price={last_price:.2f}, Ratio={ratio:.6f} (need >{threshold})")
         return is_volatile
+

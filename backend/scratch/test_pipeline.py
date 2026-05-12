@@ -6,11 +6,11 @@ from datetime import datetime
 # Add parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/..")
 
-from execution.broker_api import AngelOneBroker
-from utils.historical_data import fetch_historical_data
-from indicators.technical_indicators import TechnicalIndicators
-from signal_engine.signal_engine import SignalEngine
-from config.config import config
+from backend.execution.broker_api import AngelOneBroker
+from backend.utils.historical_data import fetch_historical_data
+from backend.indicators.technical_indicators import TechnicalIndicators
+from backend.signal_engine.signal_engine import SignalEngine
+from backend.config.config import config
 
 def test_full_pipeline():
     print("--- QUANTUM INDEX PIPELINE DIAGNOSTIC ---")
@@ -60,7 +60,7 @@ def test_full_pipeline():
 
         print("5. Generating Signal...")
         # Mock SessionFilter to return True for test
-        from filters.filters import SessionFilter
+        from backend.filters.filters import SessionFilter
         original_is_within = SessionFilter.is_within_session
         SessionFilter.is_within_session = lambda: True 
         
@@ -74,3 +74,4 @@ def test_full_pipeline():
 
 if __name__ == "__main__":
     test_full_pipeline()
+

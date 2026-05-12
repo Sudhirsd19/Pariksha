@@ -1,6 +1,6 @@
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
-from config.config import config
-from safety.health_monitor import health_monitor
+from backend.config.config import config
+from backend.safety.health_monitor import health_monitor
 import threading
 import time
 
@@ -60,3 +60,4 @@ class MarketWebSocket:
 
     def get_ltp(self, token):
         return self.ltp_data.get(token)
+
