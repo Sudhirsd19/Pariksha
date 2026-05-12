@@ -89,6 +89,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 actions: [
+                  _buildTopToggle(tradingProvider),
+                  const SizedBox(width: 15),
                   _buildPulseConnection(tradingProvider.wsConnected),
                   const SizedBox(width: 20),
                 ],
@@ -173,13 +175,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
           
-          // 8. Cyberpunk Action Button
-          Positioned(
-            bottom: 140,
-            left: 30,
-            right: 30,
-            child: _buildCyberActionButton(tradingProvider),
-          ),
         ],
       ),
     );
@@ -527,108 +522,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildCyberActionButton(TradingProvider provider) {
+  Widget _buildTopToggle(TradingProvider provider) {
     final bool active = provider.isActive;
-    
-    return GestureDetector(
-      onTap: () => provider.toggleTrading(!active),
-      child: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.02),
-          borderRadius: BorderRadius.circular(40),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-          boxShadow: [
-            if (active)
-              BoxShadow(
-                color: Colors.cyanAccent.withValues(alpha: 0.1),
-                blurRadius: 40,
-                spreadRadius: -10,
-              ),
-          ],
+    return Row(
+      children: [
+        Text(
+          active ? 'LIVE' : 'OFF',
+          style: TextStyle(
+            color: active ? Colors.cyanAccent : Colors.white24,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+          ),
         ),
-        child: Stack(
-          children: [
-            // Track Text
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'OFF',
-                    style: TextStyle(
-                      color: active ? Colors.white10 : Colors.redAccent.withValues(alpha: 0.5),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  Text(
-                    'LIVE ON',
-                    style: TextStyle(
-                      color: active ? Colors.cyanAccent : Colors.white10,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // Sliding Indicator
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOutCubic,
-              alignment: active ? Alignment.centerRight : Alignment.centerLeft,
-              child: Container(
-                width: 160,
-                height: 70,
-                margin: const EdgeInsets.all(5),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(35),
-                  gradient: LinearGradient(
-                    colors: active 
-                      ? [Colors.cyanAccent, Colors.blueAccent]
-                      : [Colors.white.withValues(alpha: 0.1), Colors.white.withValues(alpha: 0.05)],
-                  ),
-                  boxShadow: [
-                    if (active)
-                      BoxShadow(
-                        color: Colors.cyanAccent.withValues(alpha: 0.5),
-                        blurRadius: 15,
-                        spreadRadius: 2,
-                      ),
-                  ],
-                ),
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        active ? Icons.bolt_rounded : Icons.power_settings_new_rounded,
-                        color: active ? Colors.black : Colors.white24,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        active ? 'ACTIVE' : 'IDLE',
-                        style: TextStyle(
-                          color: active ? Colors.black : Colors.white24,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
+        const SizedBox(width: 8),
+        Transform.scale(
+          scale: 0.8,
+          child: Switch(
+            value: active,
+            onChanged: (val) => provider.toggleTrading(val),
+            activeColor: Colors.cyanAccent,
+            activeTrackColor: Colors.cyanAccent.withValues(alpha: 0.2),
+            inactiveThumbColor: Colors.white10,
+            inactiveTrackColor: Colors.white.withValues(alpha: 0.05),
+          ),
         ),
-      ),
+      ],
     );
   }
 
