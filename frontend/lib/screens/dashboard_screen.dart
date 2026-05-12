@@ -69,23 +69,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    const Text(
+                      'QUANTUM',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                        color: Colors.white,
+                      ),
+                    ),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'QUANTUM',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1,
-                            color: Colors.white,
-                          ),
-                        ),
+                        _buildSystemStatusBadge(tradingProvider.isActive),
                         const SizedBox(width: 8),
                         _buildNeonModeTag(tradingProvider.isPaperTrading),
                       ],
                     ),
-                    _buildSystemStatusBadge(tradingProvider.isActive),
                   ],
                 ),
                 actions: [
@@ -525,19 +524,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildTopToggle(TradingProvider provider) {
     final bool active = provider.isActive;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           active ? 'LIVE' : 'OFF',
           style: TextStyle(
             color: active ? Colors.cyanAccent : Colors.white24,
-            fontSize: 10,
+            fontSize: 9,
             fontWeight: FontWeight.w900,
-            letterSpacing: 1,
+            letterSpacing: 0.5,
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
         Transform.scale(
-          scale: 0.8,
+          scale: 0.7,
           child: Switch(
             value: active,
             onChanged: (val) => provider.toggleTrading(val),
