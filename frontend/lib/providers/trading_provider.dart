@@ -97,7 +97,7 @@ class TradingProvider with ChangeNotifier {
     try {
       // ws://10.0.2.2:8000/ws/market -> emulator tunnels 10.0.2.2 to host machine
       _wsChannel = WebSocketChannel.connect(
-        Uri.parse('ws://172.20.10.4:8000/ws/market'),
+        Uri.parse('wss://pariksha-production-ca52.up.railway.app/ws/market'),
       );
       _wsSubscription = _wsChannel!.stream.listen(
         (data) {
@@ -139,6 +139,14 @@ class TradingProvider with ChangeNotifier {
   }
 
   void _initFirestoreListeners() {
+    // Safety check for Web/Initialization failures
+    try {
+      if (FirebaseFirestore.instance.app.name.isEmpty) return;
+    } catch (e) {
+      debugPrint("Firestore not initialized, skipping listeners: $e");
+      return;
+    }
+
     // Listen to system status
     _firestore.collection('quantum_system').doc('live_status').snapshots().listen((doc) {
       if (doc.exists) {

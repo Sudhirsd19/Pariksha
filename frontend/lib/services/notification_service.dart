@@ -1,4 +1,5 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
@@ -7,6 +8,11 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   static Future<void> initialize() async {
+    // Skip initialization on web to prevent hanging/errors
+    if (identical(0, 0.0)) { // Simple way to check for web if kIsWeb is not imported
+       return;
+    }
+    
     // 1. Request Permission
     await _firebaseMessaging.requestPermission(
       alert: true,
@@ -28,7 +34,11 @@ class NotificationService {
     );
 
     // 3. Subscribe to Topic
-    await _firebaseMessaging.subscribeToTopic('trading_alerts');
+    try {
+      await _firebaseMessaging.subscribeToTopic('trading_alerts');
+    } catch (e) {
+      debugPrint("FCM Topic Subscription Error: $e");
+    }
 
     // 4. Handle Foreground Messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {

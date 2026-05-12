@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  final String baseUrl = "http://172.20.10.4:8000";
+  final String baseUrl = "https://pariksha-production-ca52.up.railway.app";
 
   Future<Map<String, dynamic>> getStatus() async {
     try {
