@@ -529,7 +529,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCyberActionButton(TradingProvider provider) {
     final bool active = provider.isActive;
-    final Color accent = active ? Colors.cyanAccent : Colors.white10;
     
     return GestureDetector(
       onTap: () => provider.toggleTrading(!active),

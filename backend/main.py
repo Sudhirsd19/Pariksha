@@ -6,6 +6,9 @@ import random
 import time
 from datetime import datetime, time as dt_time
 
+# Add project root to sys.path to handle module imports correctly
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from backend.config.config import config
