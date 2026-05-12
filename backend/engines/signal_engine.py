@@ -109,23 +109,51 @@ class SignalEngine:
         }
 
     def generate_signal(self, df_1m, df_5m, df_15m, df_1h):
-        """Wrapper for main.py to call the new institutional evaluation logic."""
+        """Wrapper for main.py — uses ATR-based TP/SL and Order Block validation."""
         from backend.engines.structure_engine import StructureEngine
         struct_engine = StructureEngine()
         structure_data = struct_engine.analyze(df_15m)
-        
+
         daily_data = {
             'open': df_1h['open'].iloc[0],
             'pdh': df_1h['high'].max(),
             'pdl': df_1h['low'].min()
         }
-        
+
         eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True})
+
+        # --- ATR-based Dynamic TP/SL (2:1 Risk-Reward Ratio) ---
+        atr_14 = (df_5m['high'].rolling(14).max() - df_5m['low'].rolling(14).min()).iloc[-1]
+        atr_multiplier_sl = 1.5
+        atr_multiplier_tp = 3.0  # 2:1 RRR
         
+        entry = df_1m['close'].iloc[-1]
+        side = eval_result['side']
+
+        if side == "BUY":
+            sl = entry - (atr_14 * atr_multiplier_sl)
+            tp = entry + (atr_14 * atr_multiplier_tp)
+        elif side == "SELL":
+            sl = entry + (atr_14 * atr_multiplier_sl)
+            tp = entry - (atr_14 * atr_multiplier_tp)
+        else:
+            sl = entry - (atr_14 * atr_multiplier_sl)
+            tp = entry + (atr_14 * atr_multiplier_tp)
+
+        # --- Order Block Validation (Extra Confirmation) ---
+        ob_valid = struct_engine.validate_order_block(df_5m, len(df_5m) - 1)
+
         return {
-            'signal': eval_result['side'],
-            'entry': df_1m['close'].iloc[-1],
-            'sl': df_1m['low'].min() - (df_1m['close'].iloc[-1] * 0.001), # Dynamic SL
-            'tp': df_1m['close'].iloc[-1] + (df_1m['close'].iloc[-1] * 0.002), # Dynamic TP
-            'reason': f"SMC Logic - Score: {eval_result['score']} | Phase: {eval_result['phase']}"
+            'signal': side,
+            'entry': round(entry, 2),
+            'sl': round(sl, 2),
+            'tp': round(tp, 2),
+            'atr': round(atr_14, 2),
+            'order_block_valid': ob_valid,
+            'reason': (
+                f"SMC | Score: {eval_result['score']} | Phase: {eval_result['phase']} | "
+                f"Killzone: {eval_result['in_killzone']} | OB: {ob_valid} | "
+                f"ATR SL: {round(atr_14 * atr_multiplier_sl, 1)} pts"
+            )
         }
+

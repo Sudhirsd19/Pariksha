@@ -34,7 +34,8 @@ class TradeManager:
             "entry": signal_data["actual_entry"],
             "sl": signal_data["sl"],
             "tp": signal_data["tp"],
-            "qty": signal_data.get("qty", 50), 
+            "qty": signal_data.get("qty", 50),
+            "atr": signal_data.get("atr", 0),  # For Trailing SL
             "status": "OPEN",
             "entry_time": signal_data["timestamp"]
         }
@@ -57,7 +58,42 @@ class TradeManager:
                     continue
                     
                 current_ltp = ltp_dict[token]
-                
+
+                # --- TRAILING STOP LOSS LOGIC ---
+                if trade['signal'] == 'BUY':
+                    tp_distance = trade['tp'] - trade['entry']
+                    current_profit = current_ltp - trade['entry']
+                    
+                    # Move SL to breakeven at 50% of target
+                    if current_profit >= tp_distance * 0.5:
+                        new_sl = trade['entry'] + (tp_distance * 0.1) # Breakeven + buffer
+                        if new_sl > trade['sl']:
+                            trade['sl'] = round(new_sl, 2)
+                    
+                    # Trail SL at 70% progress — lock in profits
+                    if current_profit >= tp_distance * 0.7:
+                        atr_trail = trade.get('atr', tp_distance * 0.3)
+                        new_sl = current_ltp - (atr_trail * 0.5)
+                        if new_sl > trade['sl']:
+                            trade['sl'] = round(new_sl, 2)
+
+                elif trade['signal'] == 'SELL':
+                    tp_distance = trade['entry'] - trade['tp']
+                    current_profit = trade['entry'] - current_ltp
+                    
+                    # Move SL to breakeven at 50% of target
+                    if current_profit >= tp_distance * 0.5:
+                        new_sl = trade['entry'] - (tp_distance * 0.1)
+                        if new_sl < trade['sl']:
+                            trade['sl'] = round(new_sl, 2)
+                    
+                    # Trail SL at 70% progress
+                    if current_profit >= tp_distance * 0.7:
+                        atr_trail = trade.get('atr', tp_distance * 0.3)
+                        new_sl = current_ltp + (atr_trail * 0.5)
+                        if new_sl < trade['sl']:
+                            trade['sl'] = round(new_sl, 2)
+
                 # Check for Exit Condition
                 hit_tp = False
                 hit_sl = False
