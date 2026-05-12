@@ -9,6 +9,9 @@ class TradingProvider with ChangeNotifier {
   static final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
   bool _isActive = false;
+  String? _hardLockReason;
+  bool _inKillzone = true;
+  int _currentScore = 0;
 
   double _dailyLoss = 0.0;
   int _tradesToday = 0;
@@ -20,6 +23,9 @@ class TradingProvider with ChangeNotifier {
   DateTime _lastUpdateTime = DateTime.now();
 
   bool get isActive => _isActive;
+  String? get hardLockReason => _hardLockReason;
+  bool get inKillzone => _inKillzone;
+  int get currentScore => _currentScore;
   bool get isPaperTrading => _systemSettings['paper_trading'] ?? true;
   double get ltp => _ltp;
   String get sentiment => _sentiment;
@@ -154,6 +160,9 @@ class TradingProvider with ChangeNotifier {
         _isActive = data['is_active'] ?? _isActive;
         _dailyLoss = (data['daily_loss'] as num?)?.toDouble() ?? _dailyLoss;
         _tradesToday = data['trades_today'] ?? _tradesToday;
+        _hardLockReason = data['hard_lock_reason'];
+        _inKillzone = data['in_killzone'] ?? true;
+        _currentScore = data['current_score'] ?? 0;
         notifyListeners();
       }
     });
@@ -208,6 +217,9 @@ class TradingProvider with ChangeNotifier {
         _ltp = (status['ltp'] as num?)?.toDouble() ?? 0.0;
         _sentiment = status['sentiment'] ?? 'Neutral';
         _sentimentScore = (status['sentiment_score'] as num?)?.toDouble() ?? 0.5;
+        _hardLockReason = status['hard_lock_reason'];
+        _inKillzone = status['in_killzone'] ?? true;
+        _currentScore = status['current_score'] ?? 0;
         notifyListeners();
       } catch (_) {}
     }

@@ -102,6 +102,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       const SizedBox(height: 10),
                       
+                      // 0. Hard Lock Warning Banner
+                      if (tradingProvider.hardLockReason != null)
+                        _buildHardLockBanner(tradingProvider.hardLockReason!),
+                      
                       // 3. Central "Power Unit" PnL Card
                       _buildHolographicPnL(tradingProvider),
                       const SizedBox(height: 24),
@@ -409,6 +413,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 provider.ltp.toStringAsFixed(2),
                 style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -1),
               ),
+              const SizedBox(height: 15),
+              _buildKillzoneIndicator(provider.inKillzone),
             ],
           ),
           Column(
@@ -420,6 +426,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 12),
               _buildModernGauge(provider.sentimentScore, accent),
+              const SizedBox(height: 15),
+              _buildScoreIndicator(provider.currentScore),
             ],
           ),
         ],
@@ -594,6 +602,82 @@ class _DashboardScreenState extends State<DashboardScreen> {
             fontWeight: FontWeight.w900,
             letterSpacing: 0.5,
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHardLockBanner(String reason) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_clock_rounded, color: Colors.redAccent, size: 28),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'SYSTEM LOCKDOWN ACTIVE',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  reason,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKillzoneIndicator(bool active) {
+    final color = active ? Colors.greenAccent : Colors.orangeAccent;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.schedule_rounded, color: color, size: 10),
+          const SizedBox(width: 6),
+          Text(
+            active ? 'KILLZONE ACTIVE' : 'OUTSIDE WINDOW',
+            style: TextStyle(color: color, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScoreIndicator(int score) {
+    final color = score >= 8 ? Colors.cyanAccent : Colors.white24;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        const Text(
+          'SIGNAL SCORE',
+          style: TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '$score/14',
+          style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: -0.5),
         ),
       ],
     );

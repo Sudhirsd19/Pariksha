@@ -93,6 +93,10 @@ async def get_status():
         sentiment = "Bullish" if last['signal'] == "BUY" else "Bearish"
         sentiment_score = 0.8 if sentiment == "Bullish" else 0.2
 
+    can_trade, lock_reason = risk_manager.check_hard_locks() if hasattr(risk_manager, 'check_hard_locks') else (True, None)
+    now = datetime.now().time()
+    in_killzone = signal_engine.check_killzone(now) if hasattr(signal_engine, 'check_killzone') else True
+
     return {
         "is_active": trading_active,
         "paper_trading": config.PAPER_TRADING,
@@ -102,7 +106,10 @@ async def get_status():
         "trades_today": risk_manager.trades_today,
         "ltp": current_ltp,
         "sentiment": sentiment,
-        "sentiment_score": sentiment_score
+        "sentiment_score": sentiment_score,
+        "hard_lock_reason": lock_reason if not can_trade else None,
+        "in_killzone": in_killzone,
+        "current_score": signals[-1].get('score', 0) if signals else 0
     }
 
 @app.websocket("/ws/market")
