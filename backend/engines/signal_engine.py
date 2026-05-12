@@ -79,6 +79,15 @@ class SignalEngine:
         if bias == "BULLISH" and structure_data['bos_bullish']: score += 3
         if bias == "BEARISH" and structure_data['bos_bearish']: score += 3
         if structure_data['sweep_high'] or structure_data['sweep_low']: score += 2
+        
+        # Premium/Discount Alignment
+        if bias == "BULLISH" and structure_data['in_discount']: score += 2
+        if bias == "BEARISH" and structure_data['in_premium']: score += 2
+        
+        # Liquidity Pool Targets (EQH/EQL)
+        if bias == "BULLISH" and structure_data['eqh']: score += 1 # Target above
+        if bias == "BEARISH" and structure_data['eql']: score += 1 # Target below
+        
         if phase in ["TRENDING", "EXPANSION"]: score += 2
         if in_killzone: score += 2 
         
@@ -93,11 +102,14 @@ class SignalEngine:
         # Ultra-Strict Trigger: 
         # 1. Must be in Killzone 
         # 2. Must be aligned with HTF Trend
-        # 3. Min score 8
+        # 3. Must be in the right zone (Discount for BUY, Premium for SELL)
+        # 4. Min score 8
         if in_killzone and bias == htf_trend and score >= 8:
             if phase != "CONSOLIDATION":
-                if bias == "BULLISH" and structure_data['bos_bullish']: side = "BUY"
-                elif bias == "BEARISH" and structure_data['bos_bearish']: side = "SELL"
+                if bias == "BULLISH" and structure_data['in_discount']:
+                    if structure_data['bos_bullish']: side = "BUY"
+                elif bias == "BEARISH" and structure_data['in_premium']:
+                    if structure_data['bos_bearish']: side = "SELL"
             
         return {
             'side': side,

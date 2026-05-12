@@ -3,7 +3,9 @@ from backend.config.config import config
 class RiskManager:
     def __init__(self, initial_capital=10000):
         self.capital = initial_capital
+        self.peak_capital = initial_capital
         self.daily_loss = 0
+        self.weekly_loss = 0
         self.consecutive_losses = 0
         self.max_consecutive_losses = 3
         
@@ -12,16 +14,51 @@ class RiskManager:
         self.short_exposure = 0
         self.max_directional_exposure = 3 # Max 3 trades in one direction
         
-        # INSTITUTIONAL LIMITS (₹10,000 CAPITAL)
-        self.max_daily_loss = 5000 # Increased for testing
-        self.max_loss_per_trade = 1000 
+        # INSTITUTIONAL LIMITS
+        self.max_daily_loss_pct = 0.02 # 2%
+        self.max_weekly_loss_pct = 0.05 # 5%
+        self.max_drawdown_pct = 0.10 # 10%
         self.trades_today = 0
-        self.max_trades = 10 # Increased to 10 for better testing coverage
+        self.max_trades = 10 
         self.risk_per_trade_pct = 0.01 # 1%
 
+        # High Impact News Windows (Mock)
+        self.news_events = [
+            "2026-05-15 10:00",
+            "2026-05-20 14:30",
+        ]
+
+    def is_news_window(self):
+        """Check if we are currently in a high-impact news window."""
+        import datetime
+        now = datetime.datetime.now()
+        for event_str in self.news_events:
+            event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
+            diff = abs((now - event_time).total_seconds() / 60)
+            if diff <= 30: # 30 min buffer
+                return True
+        return False
+
+    def check_hard_locks(self):
+        """Global circuit breaker for the strategy."""
+        if self.is_news_window():
+            return False, "News Lock: High-impact event window active."
+            
+        if self.capital < (self.peak_capital * (1 - self.max_drawdown_pct)):
+            return False, "Strategy Stop-Out: Max Drawdown Limit Hit."
+        
+        if self.daily_loss >= (self.capital * self.max_daily_loss_pct):
+            return False, f"Daily Lock: Max Daily Loss Hit (₹{self.daily_loss:.2f})."
+
+        if self.weekly_loss >= (self.capital * self.max_weekly_loss_pct):
+            return False, "Weekly Lock: Max Weekly Loss Hit."
+            
+        return True, "Safe"
+
     def can_trade(self, side=None) -> bool:
-        if self.daily_loss >= self.max_daily_loss:
-            print(f"[RiskManager] STOPPED: Daily loss limit hit (₹{self.daily_loss:.2f})")
+        can_trade_global, reason = self.check_hard_locks()
+        if not can_trade_global:
+            print(f"[RiskManager] BLOCKED: {reason}")
             return False
         if self.trades_today >= self.max_trades:
             print(f"[RiskManager] STOPPED: Max daily trades reached ({self.trades_today}/{self.max_trades})")

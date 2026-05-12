@@ -71,6 +71,9 @@ class RiskEngine:
         if self.equity < (self.peak_equity * (1 - self.max_drawdown_limit)):
             return False, "Strategy Stop-Out: Max Drawdown Limit Hit."
         
+        if self.daily_pnl <= -(self.equity * self.max_daily_loss_pct):
+            return False, "Daily Lock: Max Daily Loss Hit."
+
         if self.weekly_pnl <= -(self.equity * self.max_weekly_loss_pct):
             return False, "Weekly Lock: Max Weekly Loss Hit."
             
