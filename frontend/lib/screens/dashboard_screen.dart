@@ -529,51 +529,105 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCyberActionButton(TradingProvider provider) {
     final bool active = provider.isActive;
-    return Container(
-      height: 70,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: (active ? Colors.redAccent : Colors.cyanAccent).withValues(alpha: 0.2),
-            blurRadius: 30,
-            spreadRadius: -10,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-          child: ElevatedButton(
-            onPressed: () => provider.toggleTrading(!active),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: (active ? Colors.redAccent : Colors.cyanAccent).withValues(alpha: 0.1),
-              foregroundColor: Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-                side: BorderSide(color: (active ? Colors.redAccent : Colors.cyanAccent).withValues(alpha: 0.3), width: 1.5),
+    final Color accent = active ? Colors.cyanAccent : Colors.white10;
+    
+    return GestureDetector(
+      onTap: () => provider.toggleTrading(!active),
+      child: Container(
+        height: 80,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.02),
+          borderRadius: BorderRadius.circular(40),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+          boxShadow: [
+            if (active)
+              BoxShadow(
+                color: Colors.cyanAccent.withValues(alpha: 0.1),
+                blurRadius: 40,
+                spreadRadius: -10,
+              ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Track Text
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'OFF',
+                    style: TextStyle(
+                      color: active ? Colors.white10 : Colors.redAccent.withValues(alpha: 0.5),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  Text(
+                    'LIVE ON',
+                    style: TextStyle(
+                      color: active ? Colors.cyanAccent : Colors.white10,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(active ? Icons.power_settings_new_rounded : Icons.bolt_rounded, size: 24, color: active ? Colors.redAccent : Colors.cyanAccent),
-                const SizedBox(width: 16),
-                Text(
-                  active ? 'SHUTDOWN ENGINE' : 'INITIALIZE TRADING CORE',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 2,
-                    fontSize: 14,
-                    color: active ? Colors.redAccent : Colors.cyanAccent,
+            
+            // Sliding Indicator
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOutCubic,
+              alignment: active ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: 160,
+                height: 70,
+                margin: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(35),
+                  gradient: LinearGradient(
+                    colors: active 
+                      ? [Colors.cyanAccent, Colors.blueAccent]
+                      : [Colors.white.withValues(alpha: 0.1), Colors.white.withValues(alpha: 0.05)],
+                  ),
+                  boxShadow: [
+                    if (active)
+                      BoxShadow(
+                        color: Colors.cyanAccent.withValues(alpha: 0.5),
+                        blurRadius: 15,
+                        spreadRadius: 2,
+                      ),
+                  ],
+                ),
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        active ? Icons.bolt_rounded : Icons.power_settings_new_rounded,
+                        color: active ? Colors.black : Colors.white24,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        active ? 'ACTIVE' : 'IDLE',
+                        style: TextStyle(
+                          color: active ? Colors.black : Colors.white24,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
