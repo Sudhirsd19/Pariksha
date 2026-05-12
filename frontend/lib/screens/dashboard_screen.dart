@@ -541,7 +541,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Switch(
             value: active,
             onChanged: (val) => provider.toggleTrading(val),
-            activeColor: Colors.cyanAccent,
+            activeThumbColor: Colors.cyanAccent,
             activeTrackColor: Colors.cyanAccent.withValues(alpha: 0.2),
             inactiveThumbColor: Colors.white10,
             inactiveTrackColor: Colors.white.withValues(alpha: 0.05),
