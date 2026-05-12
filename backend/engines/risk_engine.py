@@ -9,6 +9,22 @@ class RiskEngine:
         self.max_daily_loss_pct = 0.02  # 2%
         self.max_weekly_loss_pct = 0.05 # 5%
         self.max_monthly_loss_pct = 0.10 # 10%
+
+        # High Impact News Windows (Mock)
+        self.news_events = [
+            "2026-05-15 10:00",
+            "2026-05-20 14:30",
+        ]
+
+    def is_news_window(self):
+        """Check if we are currently in a high-impact news window."""
+        now = datetime.datetime.now()
+        for event_str in self.news_events:
+            event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
+            diff = abs((now - event_time).total_seconds() / 60)
+            if diff <= 30: # 30 min buffer
+                return True
+        return False
         
         # PnL Tracking
         self.daily_pnl = 0
@@ -49,6 +65,9 @@ class RiskEngine:
 
     def check_hard_locks(self):
         """Global circuit breaker for the strategy."""
+        if self.is_news_window():
+            return False, "News Lock: High-impact event window active."
+            
         if self.equity < (self.peak_equity * (1 - self.max_drawdown_limit)):
             return False, "Strategy Stop-Out: Max Drawdown Limit Hit."
         

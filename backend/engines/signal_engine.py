@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import datetime
 
 class SignalEngine:
     def __init__(self):
@@ -36,8 +37,31 @@ class SignalEngine:
             bias = "BEARISH"
         return bias
 
+    def check_killzone(self, current_time):
+        """Define Indian Market Killzones for high-probability setups."""
+        # IST Windows: 9:15-10:45 (Morning Volatility) and 13:15-15:00 (Afternoon Trend)
+        morning_start = datetime.time(9, 15)
+        morning_end = datetime.time(10, 45)
+        afternoon_start = datetime.time(13, 15)
+        afternoon_end = datetime.time(15, 0)
+        
+        is_morning = morning_start <= current_time <= morning_end
+        is_afternoon = afternoon_start <= current_time <= afternoon_end
+        
+        return is_morning or is_afternoon
+
+    def get_htf_trend(self, htf_df):
+        """Determine trend on the Higher Timeframe (HTF)."""
+        ema50 = htf_df['close'].rolling(50).mean().iloc[-1]
+        last_close = htf_df['close'].iloc[-1]
+        return "BULLISH" if last_close > ema50 else "BEARISH"
+
     def evaluate(self, htf_df, mtf_df, structure_data, daily_data, session_info):
         """Evaluate full confluence with advanced filters."""
+        now = datetime.datetime.now().time()
+        in_killzone = self.check_killzone(now)
+        htf_trend = self.get_htf_trend(htf_df)
+        
         last_close = mtf_df['close'].iloc[-1]
         phase = self.detect_market_phase(mtf_df)
         
@@ -51,25 +75,57 @@ class SignalEngine:
         
         # Score Calculation
         score = 0
+        if bias == htf_trend: score += 4 # Strongest alignment factor
         if bias == "BULLISH" and structure_data['bos_bullish']: score += 3
         if bias == "BEARISH" and structure_data['bos_bearish']: score += 3
         if structure_data['sweep_high'] or structure_data['sweep_low']: score += 2
         if phase in ["TRENDING", "EXPANSION"]: score += 2
-        if session_info['is_valid']: score += 1
+        if in_killzone: score += 2 
         
         # Volume Validation
         vol_avg = mtf_df['volume'].rolling(20).mean().iloc[-1]
         if mtf_df['volume'].iloc[-1] > (vol_avg * 1.5): score += 2
         
+        # FVG/Imbalance Check
+        if structure_data.get('fvg_gap', False): score += 1
+        
         side = None
-        if score >= self.min_score and phase != "CONSOLIDATION":
-            if bias == "BULLISH" and structure_data['bos_bullish']: side = "BUY"
-            elif bias == "BEARISH" and structure_data['bos_bearish']: side = "SELL"
+        # Ultra-Strict Trigger: 
+        # 1. Must be in Killzone 
+        # 2. Must be aligned with HTF Trend
+        # 3. Min score 8
+        if in_killzone and bias == htf_trend and score >= 8:
+            if phase != "CONSOLIDATION":
+                if bias == "BULLISH" and structure_data['bos_bullish']: side = "BUY"
+                elif bias == "BEARISH" and structure_data['bos_bearish']: side = "SELL"
             
         return {
             'side': side,
             'score': score,
             'phase': phase,
             'bias': bias,
-            'fvg_ready': len(structure_data['fvgs']) > 0
+            'in_killzone': in_killzone,
+            'fvg_ready': structure_data.get('fvg_gap', False)
+        }
+
+    def generate_signal(self, df_1m, df_5m, df_15m, df_1h):
+        """Wrapper for main.py to call the new institutional evaluation logic."""
+        from backend.engines.structure_engine import StructureEngine
+        struct_engine = StructureEngine()
+        structure_data = struct_engine.analyze(df_15m)
+        
+        daily_data = {
+            'open': df_1h['open'].iloc[0],
+            'pdh': df_1h['high'].max(),
+            'pdl': df_1h['low'].min()
+        }
+        
+        eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True})
+        
+        return {
+            'signal': eval_result['side'],
+            'entry': df_1m['close'].iloc[-1],
+            'sl': df_1m['low'].min() - (df_1m['close'].iloc[-1] * 0.001), # Dynamic SL
+            'tp': df_1m['close'].iloc[-1] + (df_1m['close'].iloc[-1] * 0.002), # Dynamic TP
+            'reason': f"SMC Logic - Score: {eval_result['score']} | Phase: {eval_result['phase']}"
         }

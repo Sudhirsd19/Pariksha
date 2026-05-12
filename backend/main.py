@@ -23,6 +23,7 @@ from backend.utils.trade_manager import trade_manager
 from firebase_admin import messaging
 from backend.safety.health_monitor import health_monitor
 from backend.utils.persistence_manager import persistence_manager
+from backend.engines.correlation_engine import CorrelationEngine
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -68,6 +69,7 @@ current_ltp = 23997.55       # Shared live price
 broker = AngelOneBroker()
 risk_manager = RiskManager(initial_capital=100000)
 signal_engine = SignalEngine()
+correlation_engine = CorrelationEngine()
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
 ws_manager = None
 
@@ -317,6 +319,23 @@ async def trading_loop():
                 
                 signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h)
                 side = signal_data['signal']
+
+                # --- CORRELATION GUARD (Nifty vs BankNifty) ---
+                if symbol == "NIFTY":
+                    bn_token = token_manager.get_token("BANKNIFTY")
+                    bn_exchange = token_manager.get_exchange("BANKNIFTY")
+                    df_bn_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, bn_token, "FIVE_MINUTE", 5, bn_exchange)
+                    await asyncio.sleep(0.4)
+                    if df_bn_5m is not None and not df_bn_5m.empty:
+                        if not correlation_engine.check_index_alignment(df_5m, df_bn_5m):
+                            print(f"[CorrelationGuard] NIFTY/BANKNIFTY divergence detected. Skipping {symbol}.")
+                            continue
+
+                # --- RISK & NEWS HARD LOCKS ---
+                can_trade, reason = risk_manager.check_hard_locks() if hasattr(risk_manager, 'check_hard_locks') else (True, "OK")
+                if not can_trade:
+                    print(f"[HardLock] {reason}")
+                    continue
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
                     # Execution

@@ -50,16 +50,32 @@ class StructureEngine:
                 
         return displacement and swept
 
+    def detect_fvg(self, df):
+        """Identify Fair Value Gaps (FVG) in recent price action."""
+        if len(df) < 3: return False
+        
+        # Bullish FVG: High of candle 1 < Low of candle 3
+        # Bearish FVG: Low of candle 1 > High of candle 3
+        c1 = df.iloc[-3]
+        c2 = df.iloc[-2]
+        c3 = df.iloc[-1]
+        
+        bullish_fvg = c1['high'] < c3['low']
+        bearish_fvg = c1['low'] > c3['high']
+        
+        return bullish_fvg or bearish_fvg
+
     def analyze(self, df: pd.DataFrame):
         df = self.detect_swings(df)
         eq_data = self.get_equilibrium(df)
         eqh, eql = self.detect_liquidity_pools(df)
+        fvg_gap = self.detect_fvg(df)
         
         current_price = df['close'].iloc[-1]
         in_discount = current_price < eq_data['eq']
         in_premium = current_price > eq_data['eq']
         
-        # Simple BOS Detection: Price closes above recent swing high or below swing low
+        # Simple BOS Detection
         bos = "None"
         recent_swing_high = df['swing_high'].iloc[-2]
         recent_swing_low = df['swing_low'].iloc[-2]
@@ -71,9 +87,14 @@ class StructureEngine:
         
         return {
             'bos': bos,
+            'bos_bullish': bos == "Bullish",
+            'bos_bearish': bos == "Bearish",
+            'sweep_high': current_price > recent_swing_high * 1.001, # Buffer for sweep
+            'sweep_low': current_price < recent_swing_low * 0.999,
             'in_discount': in_discount,
             'in_premium': in_premium,
             'eqh': eqh,
             'eql': eql,
+            'fvg_gap': fvg_gap,
             'dealing_range': eq_data
         }
