@@ -24,7 +24,18 @@ from firebase_admin import messaging
 from backend.safety.health_monitor import health_monitor
 from backend.utils.persistence_manager import persistence_manager
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="QuantumIndex Algo-Trading System")
+
+# Enable CORS for Flutter Web
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def send_push_notification(title, body):
     """Send FCM notification to all devices subscribed to 'trading_alerts' topic."""
