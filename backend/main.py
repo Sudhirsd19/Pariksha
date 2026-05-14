@@ -95,10 +95,10 @@ async def ltp_broadcaster():
             # 1. Health & Stale Feed Check
             is_healthy = health_monitor.is_feed_healthy()
             
-            if not is_healthy and not is_paper_trading:
-                if trading_active:
-                    persistence_manager.log_event("WARNING", "STALE_FEED", "Trading halted due to frozen data")
-                    await toggle_trading(False)
+            # Only halt live trading on stale feed, paper trading continues with simulation
+            if not is_healthy and not is_paper_trading and trading_active:
+                persistence_manager.log_event("WARNING", "STALE_FEED", "Trading halted due to frozen data")
+                await toggle_trading(False)
             
             current_ltps = {}
             for symbol, token in tokens.items():
@@ -107,7 +107,7 @@ async def ltp_broadcaster():
                 
                 if not ltp or ltp == 0:
                     # Simulation / Drift logic
-                    drift = random.uniform(-1.5, 1.5)
+                    drift = random.uniform(-1.0, 1.0)
                     simulated_ltps[token] = round(simulated_ltps[token] + drift, 2)
                     ltp = simulated_ltps[token]
                 else:
@@ -122,8 +122,8 @@ async def ltp_broadcaster():
             for trade in (closed_trades or []):
                 send_push_notification(f"🏁 TRADE CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
 
-            # 3. Adaptive Throttling (Broadcast only if movement > 0.3 points)
-            if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.3:
+            # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
+            if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
                 last_broadcast_ltp = current_ltp
                 payload = json.dumps({"ltp": current_ltp, "ltps": current_ltps, "connected": True})
                 for client in list(connected_ws_clients):
@@ -132,7 +132,7 @@ async def ltp_broadcaster():
 
         except Exception as e:
             print(f"[Broadcaster Error]: {e}")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05) # 20 updates/sec for smooth price movement
 
 # --- ENDPOINTS ---
 @app.get("/")
