@@ -56,39 +56,97 @@ def send_push_notification(title, body):
     except Exception as e:
         print(f"FCM Notification Error: {e}")
 
-@app.on_event("startup")
-async def startup_event():
-    init_firebase()
-    asyncio.create_task(ltp_broadcaster())
-
-# Shared State
+# --- GLOBAL STATE & CACHE ---
 trading_active = False
+is_paper_trading = config.PAPER_TRADING
 trading_loop_task = None
 signals = []
-connected_ws_clients = set()  # Active Flutter WebSocket clients
-current_ltp = 23997.55       # Shared live price
+connected_ws_clients = set()
+current_ltp = 0.0
+last_broadcast_ltp = 0.0 
+last_execution_candle = { "NIFTY": None, "BANKNIFTY": None }
+ws_manager = None
 
-# Core Components
+# --- CORE COMPONENTS ---
 broker = AngelOneBroker()
 risk_manager = RiskManager(initial_capital=100000)
 signal_engine = SignalEngine()
 correlation_engine = CorrelationEngine()
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
-ws_manager = None
 
+@app.on_event("startup")
+async def startup_event():
+    init_firebase()
+    # Resume state from local SQLite
+    trade_manager.load_state()
+    trade_manager.risk_manager = risk_manager
+    persistence_manager.log_event("INFO", "SYSTEM_STARTUP", "QuantumIndex Engine Initialized")
+    asyncio.create_task(ltp_broadcaster())
+
+async def ltp_broadcaster():
+    """Continuously fetch LTP and push to clients with Adaptive Throttling."""
+    global current_ltp, last_broadcast_ltp, connected_ws_clients
+    symbols = ["NIFTY", "BANKNIFTY"]
+    tokens = {s: token_manager.get_token(s) for s in symbols}
+    simulated_ltps = {tokens["NIFTY"]: 24150.0, tokens["BANKNIFTY"]: 55300.0}
+    
+    while True:
+        try:
+            # 1. Health & Stale Feed Check
+            is_healthy = health_monitor.is_feed_healthy()
+            
+            if not is_healthy and not is_paper_trading:
+                if trading_active:
+                    persistence_manager.log_event("WARNING", "STALE_FEED", "Trading halted due to frozen data")
+                    await toggle_trading(False)
+            
+            current_ltps = {}
+            for symbol, token in tokens.items():
+                # Get live price if healthy, otherwise use simulation if in paper trading
+                ltp = ws_manager.get_ltp(token) if (ws_manager and is_healthy) else 0
+                
+                if not ltp or ltp == 0:
+                    # Simulation / Drift logic
+                    drift = random.uniform(-1.5, 1.5)
+                    simulated_ltps[token] = round(simulated_ltps[token] + drift, 2)
+                    ltp = simulated_ltps[token]
+                else:
+                    # Update simulated base to match live price for smooth transitions
+                    simulated_ltps[token] = ltp
+                
+                current_ltps[token] = ltp
+                if symbol == "NIFTY": current_ltp = ltp
+
+            # 2. Monitor open trades
+            closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
+            for trade in (closed_trades or []):
+                send_push_notification(f"🏁 TRADE CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
+
+            # 3. Adaptive Throttling (Broadcast only if movement > 0.3 points)
+            if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.3:
+                last_broadcast_ltp = current_ltp
+                payload = json.dumps({"ltp": current_ltp, "ltps": current_ltps, "connected": True})
+                for client in list(connected_ws_clients):
+                    try: await client.send_text(payload)
+                    except: connected_ws_clients.discard(client)
+
+        except Exception as e:
+            print(f"[Broadcaster Error]: {e}")
+        await asyncio.sleep(0.1)
+
+# --- ENDPOINTS ---
 @app.get("/")
 async def root():
     return {"message": "QuantumIndex Backend Running"}
 
 @app.get("/logs")
 async def get_logs():
-    return signals # Returning the list of signals as trade logs
+    return signals
 
 @app.get("/status")
 async def get_status():
     global current_ltp
     
-    # Calculate simple sentiment from last signal
     sentiment = "Neutral"
     sentiment_score = 0.5
     if signals:
@@ -117,80 +175,15 @@ async def get_status():
 
 @app.websocket("/ws/market")
 async def websocket_market(websocket: WebSocket):
-    """Real-time LTP stream to Flutter app."""
     await websocket.accept()
-    print(f"DEBUG: Flutter Client Connected from {websocket.client.host}")
     connected_ws_clients.add(websocket)
     try:
         while True:
-            # Keep connection alive; broadcasting is done by ltp_broadcaster
             await websocket.receive_text()
     except WebSocketDisconnect:
-        print("DEBUG: Flutter Client Disconnected")
         connected_ws_clients.discard(websocket)
     except Exception as e:
-        print(f"DEBUG: WebSocket Error: {e}")
         connected_ws_clients.discard(websocket)
-
-# --- GLOBAL STATE & CACHE ---
-trading_active = False
-is_paper_trading = True
-trading_loop_task = None
-connected_ws_clients = set()
-current_ltp = 0.0
-last_broadcast_ltp = 0.0 # For adaptive throttling
-last_execution_candle = { "NIFTY": None, "BANKNIFTY": None } # Candle lock
-
-@app.on_event("startup")
-async def startup_event():
-    init_firebase()
-    # Resume state from local SQLite
-    trade_manager.load_state()
-    trade_manager.risk_manager = risk_manager
-    persistence_manager.log_event("INFO", "SYSTEM_STARTUP", "QuantumIndex Engine Initialized")
-    asyncio.create_task(ltp_broadcaster())
-
-async def ltp_broadcaster():
-    """Continuously fetch LTP and push to clients with Adaptive Throttling."""
-    global current_ltp, last_broadcast_ltp, connected_ws_clients
-    symbols = ["NIFTY", "BANKNIFTY"]
-    tokens = {s: token_manager.get_token(s) for s in symbols}
-    simulated_ltps = {tokens["NIFTY"]: 24150.0, tokens["BANKNIFTY"]: 55300.0}
-    
-    while True:
-        try:
-            # 1. Health & Stale Feed Check
-            if not health_monitor.is_feed_healthy() and not is_paper_trading:
-                if trading_active:
-                    persistence_manager.log_event("WARNING", "STALE_FEED", "Trading halted due to frozen data")
-                    await toggle_trading(False)
-            
-            current_ltps = {}
-            for symbol, token in tokens.items():
-                ltp = ws_manager.get_ltp(token) if ws_manager else 0
-                if not ltp or ltp == 0:
-                    drift = random.uniform(-1.5, 1.5)
-                    simulated_ltps[token] = round(simulated_ltps[token] + drift, 2)
-                    ltp = simulated_ltps[token]
-                current_ltps[token] = ltp
-                if symbol == "NIFTY": current_ltp = ltp
-
-            # 2. Monitor open trades (Thread-safe)
-            closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
-            for trade in (closed_trades or []):
-                send_push_notification(f"🏁 TRADE CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
-
-            # 3. Adaptive Throttling (Broadcast only if movement > 0.5 points)
-            if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.5:
-                last_broadcast_ltp = current_ltp
-                payload = json.dumps({"ltp": current_ltp, "ltps": current_ltps, "connected": True})
-                for client in list(connected_ws_clients):
-                    try: await client.send_text(payload)
-                    except: connected_ws_clients.discard(client)
-
-        except Exception as e:
-            print(f"[Broadcaster Error]: {e}")
-        await asyncio.sleep(0.05)
 
 @app.post("/toggle-trading")
 async def toggle_trading(active: bool):
