@@ -268,22 +268,29 @@ async def square_off():
 async def trading_loop():
     global trading_active, ws_manager
     
-
-    if not broker.session:
-        success = broker.login()
-        if not success:
-            trading_active = False
-            return
-        
-        # Start WebSocket after successful login
-        if not ws_manager:
-            ws_manager = MarketWebSocket(
-                broker.session['jwtToken'], 
-                config.ANGEL_API_KEY, 
-                config.ANGEL_CLIENT_ID, 
-                broker.feed_token
-            )
+    # Always ensure a fresh session on toggle
+    success = broker.login()
+    if not success:
+        trading_active = False
+        return
+    
+    # Refresh WebSocket with fresh tokens
+    if ws_manager:
+        try:
+            ws_manager.auth_token = broker.session['jwtToken']
+            ws_manager.feed_token = broker.feed_token
             ws_manager.connect()
+        except:
+            ws_manager = None # Force recreation if refresh fails
+
+    if not ws_manager:
+        ws_manager = MarketWebSocket(
+            broker.session['jwtToken'], 
+            config.ANGEL_API_KEY, 
+            config.ANGEL_CLIENT_ID, 
+            broker.feed_token
+        )
+        ws_manager.connect()
 
     symbols = ["NIFTY", "BANKNIFTY"]
     while trading_active:
