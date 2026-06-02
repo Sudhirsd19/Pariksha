@@ -28,8 +28,12 @@ class MarketWebSocket:
         action = 1 # Subscribe
         mode = 3 # Full data (includes LTP)
         
+        from backend.utils.token_manager import token_manager
+        nifty_token = token_manager.get_token("NIFTY")
+        banknifty_token = token_manager.get_token("BANKNIFTY")
+        
         tokens = [
-            {"exchangeType": 2, "tokens": ["66071", "66068"]},   # NFO Futures
+            {"exchangeType": 2, "tokens": [nifty_token, banknifty_token]},   # NFO Futures
             {"exchangeType": 1, "tokens": ["99926000", "99926009"]}  # NSE Index
         ]
         self.sws.subscribe(correlation_id, mode, tokens)
@@ -57,6 +61,17 @@ class MarketWebSocket:
         ws_thread = threading.Thread(target=self.sws.connect)
         ws_thread.daemon = True
         ws_thread.start()
+
+    def subscribe_token(self, token, exchange_type=2):
+        """Dynamically subscribe to a new token feed (like an option contract)."""
+        if self.sws and self.running:
+            correlation_id = f"sub_{token}"
+            tokens = [{"exchangeType": exchange_type, "tokens": [token]}]
+            try:
+                self.sws.subscribe(correlation_id, 3, tokens)
+                print(f"[WebSocket] Dynamically subscribed to option token: {token}")
+            except Exception as e:
+                print(f"[WebSocket] Error subscribing to {token}: {e}")
 
     def get_ltp(self, token):
         return self.ltp_data.get(token)

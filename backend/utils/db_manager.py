@@ -11,6 +11,8 @@ class DatabaseManager:
         try:
             doc_id = str(int(time.time() * 1000))
             signal_data['id'] = doc_id
+            if 'status' not in signal_data:
+                signal_data['status'] = 'OPEN'
             db.collection("quantum_trades").document(doc_id).set(signal_data)
             return doc_id
         except Exception as e:
@@ -51,6 +53,18 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error getting settings from DB: {e}")
             return None
+            
+    @staticmethod
+    def update_settings(new_settings):
+        db = get_db()
+        if not db: 
+            return False
+        try:
+            db.collection("quantum_system").document("settings").set(new_settings, merge=True)
+            return True
+        except Exception as e:
+            print(f"Error updating settings in DB: {e}")
+            return False
             
     @staticmethod
     def save_pnl_data(pnl_data):

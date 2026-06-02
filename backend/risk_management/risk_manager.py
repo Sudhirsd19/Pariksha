@@ -39,8 +39,23 @@ class RiskManager:
                 return True
         return False
 
-    def check_hard_locks(self):
+    def is_restricted_time_window(self):
+        import datetime
+        now = datetime.datetime.now()
+        # Block 9:15 to 9:30 AM
+        if now.hour == 9 and 15 <= now.minute < 30:
+            return True
+        # Block 1:00 PM to 1:30 PM (European market open volatility)
+        if now.hour == 13 and 0 <= now.minute < 30:
+            return True
+        return False
+
+    def check_hard_locks(self, settings=None):
         """Global circuit breaker for the strategy."""
+        settings = settings or {}
+        if settings.get("use_time_restrictions", True) and self.is_restricted_time_window():
+            return False, "Time Lock: Restricted trading window (Opening or Mid-day Lull)."
+
         if self.is_news_window():
             return False, "News Lock: High-impact event window active."
             
@@ -48,7 +63,7 @@ class RiskManager:
             return False, "Strategy Stop-Out: Max Drawdown Limit Hit."
         
         if self.daily_loss >= (self.capital * self.max_daily_loss_pct):
-            return False, f"Daily Lock: Max Daily Loss Hit (₹{self.daily_loss:.2f})."
+            return False, f"Daily Lock: Max Daily Loss Hit (Rs.{self.daily_loss:.2f})."
 
         if self.weekly_loss >= (self.capital * self.max_weekly_loss_pct):
             return False, "Weekly Lock: Max Weekly Loss Hit."
@@ -103,6 +118,10 @@ class RiskManager:
         self.daily_loss -= pnl 
         self.trades_today += 1
         
+        self.capital += pnl
+        if self.capital > self.peak_capital:
+            self.peak_capital = self.capital
+            
         if pnl < 0:
             self.consecutive_losses += 1
         else:

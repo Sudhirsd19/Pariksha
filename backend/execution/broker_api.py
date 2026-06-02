@@ -32,7 +32,7 @@ class AngelOneBroker:
             print(f"EXCEPTION during login: {e}")
             return False
 
-    def place_order(self, symbol, token, qty, side, price=0, order_type="MARKET"):
+    def place_order(self, symbol, token, qty, side, price=0, order_type="MARKET", exchange="NFO"):
         """
         Place a trade order with slippage protection.
         side: BUY or SELL
@@ -42,9 +42,9 @@ class AngelOneBroker:
             print("ERROR: No active session. Please login first.")
             return None
 
-        # --- PRODUCTION SAFETY: Slippage & Spread Check (only for LIMIT orders) ---
-        if order_type == "LIMIT" and price > 0:
-            current_ltp = self.get_market_data("NFO", symbol, token)
+        # --- PRODUCTION SAFETY: Slippage & Spread Check (only for MARKET orders) ---
+        if order_type == "MARKET" and price > 0:
+            current_ltp = self.get_market_data(exchange, symbol, token)
             if current_ltp > 0:
                 slippage = abs(current_ltp - price) / price
                 if slippage > 0.005:  # 0.5% max slippage
@@ -57,14 +57,30 @@ class AngelOneBroker:
                 "tradingsymbol": symbol,
                 "symboltoken": token,
                 "transactiontype": side,
-                "exchange": "NFO",
+                "exchange": exchange,
                 "ordertype": order_type,
                 "producttype": "INTRADAY",
                 "duration": "DAY",
                 "quantity": qty
             }
             res = self.smart_api.placeOrder(order_params)
-            if res and res.get('status'):  # FIX: guard against None response
+            
+            # Auto-recovery: If token is missing/expired, trigger a re-login and retry placing the order
+            is_token_error = False
+            if not res:
+                is_token_error = True
+            elif not res.get('status'):
+                err_code = res.get('errorCode', '')
+                err_msg = res.get('message', '').lower()
+                if err_code in ["AG8003", "AB1000"] or "token" in err_msg or "session" in err_msg:
+                    is_token_error = True
+                    
+            if is_token_error:
+                print("[Broker] Detected invalid/expired session. Attempting auto-login recovery...")
+                if self.login():
+                    res = self.smart_api.placeOrder(order_params)
+
+            if res and res.get('status'):  # guard against None response
                 order_data = res.get('data') or {}
                 order_id = order_data.get('orderid')
                 if order_id:

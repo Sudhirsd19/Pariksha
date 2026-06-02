@@ -126,10 +126,14 @@ class LogsScreen extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            '${log['signal'] ?? 'SIGNAL'} - ${log['symbol'] ?? 'NIFTY'}',
-                            style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16, letterSpacing: 0.5),
+                          Expanded(
+                            child: Text(
+                              '${log['signal'] ?? 'SIGNAL'} - ${log['symbol'] ?? 'NIFTY'}',
+                              style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16, letterSpacing: 0.5),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
                             log['timestamp'] != null 
                               ? "${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).hour.toString().padLeft(2,'0')}:${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).minute.toString().padLeft(2,'0')}"
@@ -142,9 +146,11 @@ class LogsScreen extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          _buildMiniBadge('PRICE', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent),
-                          _buildMiniBadge('SL', '${log['sl'] ?? '0.0'}', Colors.redAccent),
-                          _buildMiniBadge('TP', '${log['tp'] ?? '0.0'}', Colors.greenAccent),
+                          Expanded(child: _buildMiniBadge('PRICE', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
+                          const SizedBox(width: 8),
+                          Expanded(child: _buildMiniBadge('SL', '${log['sl'] ?? '0.0'}', Colors.redAccent)),
+                          const SizedBox(width: 8),
+                          Expanded(child: _buildMiniBadge('TP', '${log['tp'] ?? '0.0'}', Colors.greenAccent)),
                         ],
                       ),
                       const SizedBox(height: 16),

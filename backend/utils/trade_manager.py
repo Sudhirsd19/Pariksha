@@ -37,7 +37,15 @@ class TradeManager:
             "qty": signal_data.get("qty", 50),
             "atr": signal_data.get("atr", 0),  # For Trailing SL
             "status": "OPEN",
-            "entry_time": signal_data["timestamp"]
+            "entry_time": signal_data["timestamp"],
+            
+            # Options specific parameters
+            "instrument_type": signal_data.get("instrument_type", "FUTURES"),
+            "original_signal": signal_data.get("original_signal", signal_data["signal"]),
+            "underlying_token": signal_data.get("underlying_token"),
+            "underlying_entry": signal_data.get("underlying_entry"),
+            "underlying_sl": signal_data.get("underlying_sl"),
+            "underlying_tp": signal_data.get("underlying_tp")
         }
         with self._lock:
             self.active_trades.append(trade)
@@ -58,68 +66,141 @@ class TradeManager:
                     continue
                     
                 current_ltp = ltp_dict[token]
+                is_options = trade.get("instrument_type") == "OPTIONS"
 
                 # --- TRAILING STOP LOSS LOGIC ---
-                if trade['signal'] == 'BUY':
-                    tp_distance = trade['tp'] - trade['entry']
-                    current_profit = current_ltp - trade['entry']
-                    
-                    # Move SL to breakeven at 50% of target
-                    if current_profit >= tp_distance * 0.5:
-                        new_sl = trade['entry'] + (tp_distance * 0.1) # Breakeven + buffer
-                        if new_sl > trade['sl']:
-                            trade['sl'] = round(new_sl, 2)
-                    
-                    # Trail SL at 70% progress — lock in profits
-                    if current_profit >= tp_distance * 0.7:
-                        atr_trail = trade.get('atr', tp_distance * 0.3)
-                        new_sl = current_ltp - (atr_trail * 0.5)
-                        if new_sl > trade['sl']:
-                            trade['sl'] = round(new_sl, 2)
+                if is_options:
+                    underlying_token = trade.get("underlying_token")
+                    if underlying_token and underlying_token in ltp_dict:
+                        underlying_ltp = ltp_dict[underlying_token]
+                        original_signal = trade.get("original_signal", "BUY")
+                        
+                        if original_signal == 'BUY':
+                            tp_distance = trade['underlying_tp'] - trade['underlying_entry']
+                            current_profit = underlying_ltp - trade['underlying_entry']
+                            
+                            # Move SL to breakeven at 50% of target
+                            if current_profit >= tp_distance * 0.5:
+                                new_sl = trade['underlying_entry'] + (tp_distance * 0.1) # Breakeven + buffer
+                                if new_sl > trade['underlying_sl']:
+                                    trade['underlying_sl'] = round(new_sl, 2)
+                            
+                            # Trail SL at 70% progress — lock in profits
+                            if current_profit >= tp_distance * 0.7:
+                                atr_trail = trade.get('atr', tp_distance * 0.3)
+                                new_sl = underlying_ltp - (atr_trail * 0.5)
+                                if new_sl > trade['underlying_sl']:
+                                    trade['underlying_sl'] = round(new_sl, 2)
+                                    
+                        elif original_signal == 'SELL':
+                            tp_distance = trade['underlying_entry'] - trade['underlying_tp']
+                            current_profit = trade['underlying_entry'] - underlying_ltp
+                            
+                            # Move SL to breakeven at 50% of target
+                            if current_profit >= tp_distance * 0.5:
+                                new_sl = trade['underlying_entry'] - (tp_distance * 0.1)
+                                if new_sl < trade['underlying_sl']:
+                                    trade['underlying_sl'] = round(new_sl, 2)
+                            
+                            # Trail SL at 70% progress
+                            if current_profit >= tp_distance * 0.7:
+                                atr_trail = trade.get('atr', tp_distance * 0.3)
+                                new_sl = underlying_ltp + (atr_trail * 0.5)
+                                if new_sl < trade['underlying_sl']:
+                                    trade['underlying_sl'] = round(new_sl, 2)
+                else:
+                    # Futures Trailing SL
+                    if trade['signal'] == 'BUY':
+                        tp_distance = trade['tp'] - trade['entry']
+                        current_profit = current_ltp - trade['entry']
+                        
+                        # Move SL to breakeven at 50% of target
+                        if current_profit >= tp_distance * 0.5:
+                            new_sl = trade['entry'] + (tp_distance * 0.1) # Breakeven + buffer
+                            if new_sl > trade['sl']:
+                                trade['sl'] = round(new_sl, 2)
+                        
+                        # Trail SL at 70% progress — lock in profits
+                        if current_profit >= tp_distance * 0.7:
+                            atr_trail = trade.get('atr', tp_distance * 0.3)
+                            new_sl = current_ltp - (atr_trail * 0.5)
+                            if new_sl > trade['sl']:
+                                trade['sl'] = round(new_sl, 2)
 
-                elif trade['signal'] == 'SELL':
-                    tp_distance = trade['entry'] - trade['tp']
-                    current_profit = trade['entry'] - current_ltp
-                    
-                    # Move SL to breakeven at 50% of target
-                    if current_profit >= tp_distance * 0.5:
-                        new_sl = trade['entry'] - (tp_distance * 0.1)
-                        if new_sl < trade['sl']:
-                            trade['sl'] = round(new_sl, 2)
-                    
-                    # Trail SL at 70% progress
-                    if current_profit >= tp_distance * 0.7:
-                        atr_trail = trade.get('atr', tp_distance * 0.3)
-                        new_sl = current_ltp + (atr_trail * 0.5)
-                        if new_sl < trade['sl']:
-                            trade['sl'] = round(new_sl, 2)
+                    elif trade['signal'] == 'SELL':
+                        tp_distance = trade['entry'] - trade['tp']
+                        current_profit = trade['entry'] - current_ltp
+                        
+                        # Move SL to breakeven at 50% of target
+                        if current_profit >= tp_distance * 0.5:
+                            new_sl = trade['entry'] - (tp_distance * 0.1)
+                            if new_sl < trade['sl']:
+                                trade['sl'] = round(new_sl, 2)
+                        
+                        # Trail SL at 70% progress
+                        if current_profit >= tp_distance * 0.7:
+                            atr_trail = trade.get('atr', tp_distance * 0.3)
+                            new_sl = current_ltp + (atr_trail * 0.5)
+                            if new_sl < trade['sl']:
+                                trade['sl'] = round(new_sl, 2)
 
                 # Check for Exit Condition
                 hit_tp = False
                 hit_sl = False
                 exit_price = 0.0
 
-                if trade["signal"] == "BUY":
-                    if current_ltp >= trade["tp"]:
-                        hit_tp = True
-                        exit_price = current_ltp
-                    elif current_ltp <= trade["sl"]:
+                if is_options:
+                    underlying_token = trade.get("underlying_token")
+                    original_signal = trade.get("original_signal", "BUY")
+                    
+                    if underlying_token and underlying_token in ltp_dict:
+                        underlying_ltp = ltp_dict[underlying_token]
+                        if original_signal == "BUY":
+                            if underlying_ltp >= trade.get("underlying_tp", 999999):
+                                hit_tp = True
+                                exit_price = current_ltp
+                            elif underlying_ltp <= trade.get("underlying_sl", 0):
+                                hit_sl = True
+                                exit_price = current_ltp
+                        elif original_signal == "SELL":
+                            if underlying_ltp <= trade.get("underlying_tp", 0):
+                                hit_tp = True
+                                exit_price = current_ltp
+                            elif underlying_ltp >= trade.get("underlying_sl", 999999):
+                                hit_sl = True
+                                exit_price = current_ltp
+
+                    # Options Premium Floor Stop-Loss (Max 50% decay)
+                    if not hit_tp and current_ltp <= trade["entry"] * 0.5:
                         hit_sl = True
                         exit_price = current_ltp
-                elif trade["signal"] == "SELL":
-                    if current_ltp <= trade["tp"]:
-                        hit_tp = True
-                        exit_price = current_ltp
-                    elif current_ltp >= trade["sl"]:
-                        hit_sl = True
-                        exit_price = current_ltp
+                else:
+                    # Futures logic
+                    if trade["signal"] == "BUY":
+                        if current_ltp >= trade["tp"]:
+                            hit_tp = True
+                            exit_price = current_ltp
+                        elif current_ltp <= trade["sl"]:
+                            hit_sl = True
+                            exit_price = current_ltp
+                    elif trade["signal"] == "SELL":
+                        if current_ltp <= trade["tp"]:
+                            hit_tp = True
+                            exit_price = current_ltp
+                        elif current_ltp >= trade["sl"]:
+                            hit_sl = True
+                            exit_price = current_ltp
 
                 if hit_tp or hit_sl:
                     # Calculate PnL
-                    if trade["signal"] == "BUY":
+                    if is_options:
+                        # Option buying: we always buy CE/PE option, so exit - entry determines pnl
                         pnl = (exit_price - trade["entry"]) * trade["qty"]
                     else:
-                        pnl = (trade["entry"] - exit_price) * trade["qty"]
+                        if trade["signal"] == "BUY":
+                            pnl = (exit_price - trade["entry"]) * trade["qty"]
+                        else:
+                            pnl = (trade["entry"] - exit_price) * trade["qty"]
                     
                     # Approximate Brokerage & STT for NIFTY F&O
                     charges = 60.0 
@@ -191,10 +272,13 @@ class TradeManager:
             else:
                 exit_price = ltp_dict[token]
             
-            if trade["signal"] == "BUY":
+            if trade.get("instrument_type") == "OPTIONS":
                 pnl = (exit_price - trade["entry"]) * trade["qty"]
             else:
-                pnl = (trade["entry"] - exit_price) * trade["qty"]
+                if trade["signal"] == "BUY":
+                    pnl = (exit_price - trade["entry"]) * trade["qty"]
+                else:
+                    pnl = (trade["entry"] - exit_price) * trade["qty"]
                 
             charges = 60.0 
             net_pnl = pnl - charges

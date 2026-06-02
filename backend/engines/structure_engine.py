@@ -82,12 +82,18 @@ class StructureEngine:
         elif current_price < recent_swing_low:
             bos = "Bearish"
         
+        current_high = df['high'].iloc[-1]
+        current_low = df['low'].iloc[-1]
+        
+        sweep_high = current_high > recent_swing_high and current_price <= recent_swing_high
+        sweep_low = current_low < recent_swing_low and current_price >= recent_swing_low
+        
         return {
             'bos': bos,
             'bos_bullish': bos == "Bullish",
             'bos_bearish': bos == "Bearish",
-            'sweep_high': current_price > recent_swing_high * 1.001, # Buffer for sweep
-            'sweep_low': current_price < recent_swing_low * 0.999,
+            'sweep_high': sweep_high,
+            'sweep_low': sweep_low,
             'in_discount': in_discount,
             'in_premium': in_premium,
             'eqh': eqh,

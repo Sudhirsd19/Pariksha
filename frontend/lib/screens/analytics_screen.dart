@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../providers/trading_provider.dart';
+import 'stock_scanner_screen.dart';
 
 class AnalyticsScreen extends StatelessWidget {
   const AnalyticsScreen({super.key});
@@ -36,6 +37,19 @@ class AnalyticsScreen extends StatelessWidget {
                 pinned: true,
                 elevation: 0,
                 backgroundColor: Colors.transparent,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.radar_rounded, color: Colors.cyanAccent),
+                    tooltip: "Stock Radar",
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const StockScannerScreen()),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 flexibleSpace: ClipRRect(
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),

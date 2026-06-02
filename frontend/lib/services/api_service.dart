@@ -1,9 +1,11 @@
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  final String baseUrl = "https://pariksha-production-ca52.up.railway.app";
+  final String baseUrl = kDebugMode
+      ? "http://10.0.2.2:8000"
+      : "https://pariksha-production-ca52.up.railway.app";
 
   Future<Map<String, dynamic>> getStatus() async {
     try {
@@ -73,5 +75,31 @@ class ApiService {
       debugPrint("Error during square off: $e");
     }
     return false;
+  }
+
+  Future<Map<String, dynamic>?> analyzeStock(String symbol) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/analyze-stock?symbol=$symbol'));
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("Error analyzing stock: $e");
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/execute-stock-trade?symbol=$symbol&side=$side'),
+      );
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("Error executing stock trade: $e");
+    }
+    return null;
   }
 }

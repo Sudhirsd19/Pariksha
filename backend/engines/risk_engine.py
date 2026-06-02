@@ -15,16 +15,6 @@ class RiskEngine:
             "2026-05-15 10:00",
             "2026-05-20 14:30",
         ]
-
-    def is_news_window(self):
-        """Check if we are currently in a high-impact news window."""
-        now = datetime.datetime.now()
-        for event_str in self.news_events:
-            event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
-            diff = abs((now - event_time).total_seconds() / 60)
-            if diff <= 30: # 30 min buffer
-                return True
-        return False
         
         # PnL Tracking
         self.daily_pnl = 0
@@ -35,6 +25,16 @@ class RiskEngine:
         # Equity Protection
         self.peak_equity = initial_capital
         self.max_drawdown_limit = 0.15 # 15% Max DD stop-out
+
+    def is_news_window(self):
+        """Check if we are currently in a high-impact news window."""
+        now = datetime.datetime.now()
+        for event_str in self.news_events:
+            event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
+            diff = abs((now - event_time).total_seconds() / 60)
+            if diff <= 30: # 30 min buffer
+                return True
+        return False
 
     def calculate_vol_adjusted_qty(self, entry_price, stop_loss_price, atr):
         """Dynamic position sizing based on ATR volatility and fixed risk."""

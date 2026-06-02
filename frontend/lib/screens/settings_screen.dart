@@ -15,8 +15,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _takeProfitPoints = 50.0;
   double _stopLossPoints = 25.0;
   double _maxDailyTrades = 5.0;
+  double _capitalLimit = 10000.0;
   bool _paperTrading = true;
+  String _instrumentType = 'FUTURES';
+  bool _fnoTrading = true;
+  bool _equityTrading = true;
+  bool _useTimeRestrictions = true;
   bool _isSaving = false;
+  bool _isInitialized = false;
 
   @override
   void initState() {
@@ -32,7 +38,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _takeProfitPoints = (settings['take_profit_points'] as num?)?.toDouble() ?? 50.0;
       _stopLossPoints = (settings['stop_loss_points'] as num?)?.toDouble() ?? 25.0;
       _maxDailyTrades = (settings['max_daily_trades'] as num?)?.toDouble() ?? 5.0;
+      _capitalLimit = (settings['capital_limit'] as num?)?.toDouble() ?? 10000.0;
       _paperTrading = settings['paper_trading'] ?? true;
+      _instrumentType = settings['instrument_type'] ?? 'FUTURES';
+      _fnoTrading = settings['fno_trading'] ?? true;
+      _equityTrading = settings['equity_trading'] ?? true;
+      _useTimeRestrictions = settings['use_time_restrictions'] ?? true;
     });
   }
 
@@ -44,7 +55,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'take_profit_points': _takeProfitPoints.toInt(),
       'stop_loss_points': _stopLossPoints.toInt(),
       'max_daily_trades': _maxDailyTrades.toInt(),
+      'capital_limit': _capitalLimit,
       'paper_trading': _paperTrading,
+      'instrument_type': _instrumentType,
+      'fno_trading': _fnoTrading,
+      'equity_trading': _equityTrading,
+      'use_time_restrictions': _useTimeRestrictions,
     });
     setState(() => _isSaving = false);
     if (mounted) {
@@ -57,6 +73,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TradingProvider>(context);
+
+    if (!_isInitialized && provider.systemSettings.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadSettings();
+          setState(() {
+            _isInitialized = true;
+          });
+        }
+      });
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFF040408),
@@ -83,10 +110,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-                  onPressed: () => Navigator.pop(context),
-                ),
+                leading: Navigator.canPop(context)
+                    ? IconButton(
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                        onPressed: () => Navigator.pop(context),
+                      )
+                    : null,
                 actions: [
                   IconButton(
                     icon: const Icon(Icons.refresh_rounded, color: Colors.cyanAccent),
@@ -101,6 +130,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   delegate: SliverChildListDelegate([
                     _buildSectionHeader('SYSTEM MODE'),
                     _buildHolographicModeSwitch(),
+                    
+                    _buildSectionHeader('TRADING SEGMENTS'),
+                    _buildSegmentSwitches(),
+                    
+                    _buildSectionHeader('TRADING INSTRUMENT'),
+                    _buildInstrumentToggle(),
                     
                     _buildSectionHeader('RISK PARAMETERS'),
                     _buildCyberSlider(
@@ -132,6 +167,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _maxDailyTrades, 1, 20, 19, 
                       (val) => setState(() => _maxDailyTrades = val),
                       Icons.security_rounded, Colors.orangeAccent
+                    ),
+                    _buildCyberSlider(
+                      'CAPITAL LIMIT', 
+                      '₹${_capitalLimit.toInt()}', 
+                      _capitalLimit, 5000, 100000, 19, 
+                      (val) => setState(() => _capitalLimit = val),
+                      Icons.account_balance_wallet_rounded, Colors.cyanAccent
                     ),
 
                     const SizedBox(height: 30),
@@ -215,6 +257,170 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSegmentSwitches() {
+    const activeColor = Colors.cyanAccent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.tune_rounded, color: activeColor, size: 18),
+              SizedBox(width: 12),
+              Text('ACTIVE SEGMENTS', style: TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SwitchListTile(
+            title: const Text(
+              'FUTURES & OPTIONS (F&O)',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+            ),
+            subtitle: const Text(
+              'Automated F&O loop trading for NIFTY/BANKNIFTY.',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            value: _fnoTrading,
+            onChanged: (val) => setState(() => _fnoTrading = val),
+            activeThumbColor: activeColor,
+            activeTrackColor: activeColor.withValues(alpha: 0.2),
+            inactiveThumbColor: Colors.white38,
+            inactiveTrackColor: Colors.white10,
+            contentPadding: EdgeInsets.zero,
+          ),
+          const Divider(color: Colors.white10, height: 24),
+          SwitchListTile(
+            title: const Text(
+              'EQUITY CASH (INTRADAY)',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+            ),
+            subtitle: const Text(
+              'Intraday stock trades execution from Watchlist.',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            value: _equityTrading,
+            onChanged: (val) => setState(() => _equityTrading = val),
+            activeThumbColor: activeColor,
+            activeTrackColor: activeColor.withValues(alpha: 0.2),
+            inactiveThumbColor: Colors.white38,
+            inactiveTrackColor: Colors.white10,
+            contentPadding: EdgeInsets.zero,
+          ),
+          const Divider(color: Colors.white10, height: 24),
+          SwitchListTile(
+            title: const Text(
+              'TIME RESTRICTIONS',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+            ),
+            subtitle: const Text(
+              'Block trades during 9:15-9:30 & 1:00-1:30',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            value: _useTimeRestrictions,
+            onChanged: (val) => setState(() => _useTimeRestrictions = val),
+            activeThumbColor: activeColor,
+            activeTrackColor: activeColor.withValues(alpha: 0.2),
+            inactiveThumbColor: Colors.white38,
+            inactiveTrackColor: Colors.white10,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInstrumentToggle() {
+    final isOptions = _instrumentType == "OPTIONS";
+    const activeColor = Colors.cyanAccent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.swap_horizontal_circle_outlined, color: activeColor, size: 18),
+              SizedBox(width: 12),
+              Text('TRADING INSTRUMENT', style: TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => setState(() => _instrumentType = "FUTURES"),
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: !isOptions ? activeColor.withValues(alpha: 0.1) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: !isOptions ? activeColor : Colors.white24, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'FUTURES',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: !isOptions ? Colors.white : Colors.white38,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: InkWell(
+                  onTap: () => setState(() => _instrumentType = "OPTIONS"),
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: isOptions ? activeColor.withValues(alpha: 0.1) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: isOptions ? activeColor : Colors.white24, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'OPTIONS',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: isOptions ? Colors.white : Colors.white38,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isOptions 
+                ? 'Low Capital Buying: Trade ATM Weekly Call/Put Options (~₹3k - ₹10k per lot).' 
+                : 'Direct Index Tracking: Trade index futures (~₹1.2L margin per lot).',
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+        ],
       ),
     );
   }

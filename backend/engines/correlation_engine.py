@@ -28,3 +28,28 @@ class CorrelationEngine:
             return False  # Divergence detected
 
         return True  # Aligned
+
+    def check_heavyweight_alignment(self, symbol, index_df, heavyweight_df):
+        """
+        Check if the Index and its Heavyweight component are aligned.
+        For NIFTY -> Reliance
+        For BANKNIFTY -> HDFC Bank
+        """
+        if index_df is None or heavyweight_df is None:
+            return False
+        if index_df.empty or heavyweight_df.empty:
+            return False
+
+        index_ret = index_df['close'].pct_change(1).iloc[-1]
+        heavyweight_ret = heavyweight_df['close'].pct_change(1).iloc[-1]
+
+        if index_ret != index_ret or heavyweight_ret != heavyweight_ret:
+            return True
+
+        # If Index is pumping but Heavyweight is dumping => Fake Breakout (Trap)
+        if (index_ret > 0.001 and heavyweight_ret < -0.0005) or \
+           (index_ret < -0.001 and heavyweight_ret > 0.0005):
+            print(f"[CorrelationGuard] TRAP AVOIDED: {symbol} diverging from its Heavyweight.")
+            return False
+
+        return True

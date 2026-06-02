@@ -54,7 +54,7 @@ class _PnLScreenState extends State<PnLScreen> with SingleTickerProviderStateMix
                   ),
                 ),
                 bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(50),
+                  preferredSize: const Size.fromHeight(64),
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                     decoration: BoxDecoration(

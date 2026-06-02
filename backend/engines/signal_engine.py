@@ -171,7 +171,7 @@ class SignalEngine:
             tp = entry + (atr_14 * atr_multiplier_tp)
 
         # --- Order Block Validation (Extra Confirmation) ---
-        ob_valid = struct_engine.validate_order_block(df_5m, len(df_5m) - 1)
+        ob_valid = self.struct_engine.validate_order_block(df_5m, len(df_5m) - 1)
 
         return {
             'signal': side if side else 'NO TRADE',  # FIX: return string not None

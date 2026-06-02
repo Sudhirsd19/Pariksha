@@ -1,3 +1,18 @@
+import socket
+
+# Monkey-patch socket.getaddrinfo to force IPv4 and prevent slow IPv6 timeouts
+original_getaddrinfo = socket.getaddrinfo
+
+def ipv4_only_getaddrinfo(*args, **kwargs):
+    args = list(args)
+    if len(args) > 2:
+        args[2] = socket.AF_INET
+    else:
+        kwargs['family'] = socket.AF_INET
+    return original_getaddrinfo(*args, **kwargs)
+
+socket.getaddrinfo = ipv4_only_getaddrinfo
+
 import asyncio
 import os
 import sys
@@ -9,7 +24,7 @@ from datetime import datetime, time as dt_time
 # Add project root to sys.path to handle module imports correctly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 
 from backend.config.config import config
 from backend.engines.cooldown_engine import CooldownEngine
@@ -52,9 +67,11 @@ def send_push_notification(title, body):
             topic='trading_alerts',
         )
         messaging.send(message)
-        print(f"SENT NOTIFICATION: {title}")
+        safe_title = title.encode('ascii', 'ignore').decode('ascii')
+        print(f"SENT NOTIFICATION: {safe_title}")
     except Exception as e:
-        print(f"FCM Notification Error: {e}")
+        # Safe print for exception message as well
+        print(f"FCM Notification Error: {str(e).encode('ascii', 'ignore').decode('ascii')}")
 
 # --- GLOBAL STATE & CACHE ---
 trading_active = False
@@ -65,6 +82,8 @@ connected_ws_clients = set()
 current_ltp = 0.0
 last_broadcast_ltp = 0.0 
 last_execution_candle = { "NIFTY": None, "BANKNIFTY": None }
+last_checked_candle = { "NIFTY": None, "BANKNIFTY": None }
+last_reset_date = datetime.now().date()
 ws_manager = None
 
 # --- CORE COMPONENTS ---
@@ -88,14 +107,14 @@ async def startup_event():
         from backend.config.firebase_config import get_db
         db = get_db()
         if db:
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.utcnow().strftime("%Y-%m-%d")
             doc = db.collection("pnl_daily").document(today).get()
             if doc.exists:
                 data = doc.to_dict()
                 risk_manager.daily_loss = abs(float(data.get("total_pnl", 0))) if float(data.get("total_pnl", 0)) < 0 else 0
                 risk_manager.trades_today = int(data.get("total_trades", 0))
-                persistence_manager.log_event("INFO", "DAILY_RESTORE", f"Restored: trades={risk_manager.trades_today}, loss=₹{risk_manager.daily_loss:.2f}")
-                print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=₹{risk_manager.daily_loss:.2f}")
+                persistence_manager.log_event("INFO", "DAILY_RESTORE", f"Restored: trades={risk_manager.trades_today}, loss=Rs.{risk_manager.daily_loss:.2f}")
+                print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=Rs.{risk_manager.daily_loss:.2f}")
     except Exception as e:
         print(f"[Startup] Could not restore daily stats: {e}")
     
@@ -118,6 +137,14 @@ async def ltp_broadcaster():
                 persistence_manager.log_event("WARNING", "STALE_FEED", "Trading halted due to frozen data")
                 await toggle_trading(False)
             
+            # Get open trade tokens to include in current_ltps
+            active_trade_tokens = []
+            with trade_manager._lock:
+                for t in trade_manager.active_trades:
+                    tok = t.get("token")
+                    if tok:
+                        active_trade_tokens.append(tok)
+
             current_ltps = {}
             for symbol, token in tokens.items():
                 # Get live price if healthy, otherwise use simulation if in paper trading
@@ -134,6 +161,29 @@ async def ltp_broadcaster():
                 
                 current_ltps[token] = ltp
                 if symbol == "NIFTY": current_ltp = ltp
+
+            # Fetch or simulate price for all active trade tokens (e.g. options premium)
+            for token in active_trade_tokens:
+                if token in current_ltps:
+                    continue
+                ltp = ws_manager.get_ltp(token) if (ws_manager and is_healthy) else 0
+                if not ltp or ltp == 0:
+                    if token not in simulated_ltps:
+                        # Find the initial premium entry price as a base
+                        entry_premium = 100.0
+                        with trade_manager._lock:
+                            for t in trade_manager.active_trades:
+                                if t.get("token") == token:
+                                    entry_premium = t.get("entry", 100.0)
+                                    break
+                        simulated_ltps[token] = entry_premium
+                    
+                    drift = random.uniform(-0.5, 0.5)
+                    simulated_ltps[token] = max(1.0, round(simulated_ltps[token] + drift, 2))
+                    ltp = simulated_ltps[token]
+                else:
+                    simulated_ltps[token] = ltp
+                current_ltps[token] = ltp
 
             # 2. Monitor open trades
             closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
@@ -233,6 +283,17 @@ async def toggle_trading(active: bool):
     persistence_manager.log_event("INFO", "ENGINE_TOGGLED", f"Active: {active}")
     return {"status": "success", "trading_active": trading_active}
 
+@app.get("/settings")
+async def get_settings():
+    settings = await asyncio.to_thread(db_manager.get_settings)
+    return settings or {}
+
+@app.post("/settings")
+async def update_settings(settings: dict):
+    success = await asyncio.to_thread(db_manager.update_settings, settings)
+    return {"status": "success" if success else "error"}
+
+
 @app.get("/analytics")
 async def get_analytics():
     """Returns real analytics from trade_manager."""
@@ -274,21 +335,67 @@ async def get_pnl():
 
 @app.post("/test-trade")
 async def trigger_test_trade():
-    import random
-    ltp = 23997.55
+    global current_ltp
+    ltp = current_ltp if current_ltp > 0 else 24150.0
+    
+    # Check instrument type from settings
+    settings = db_manager.get_settings() or {}
+    instrument_type = settings.get("instrument_type", "FUTURES")
+    capital_limit = float(settings.get("capital_limit", 10000))
+    
     signal_data = {
         "signal": "BUY",
         "symbol": "NIFTY",
-        "token": token_manager.get_token("NIFTY"),  # FIX: Assign NIFTY token so trade is monitored
         "entry": ltp,
         "actual_entry": ltp + 0.5,
         "sl": ltp - 3.0,
         "tp": ltp + 3.0,
-        "reason": "TEST - PnL Accuracy Verification",
+        "reason": "TEST - Option/Future Flow Verification",
         "is_paper": True,
-        "timestamp": int(asyncio.get_event_loop().time() * 1000)
+        "timestamp": int(time.time() * 1000)
     }
     
+    if instrument_type == "OPTIONS":
+        option_contract = token_manager.get_atm_option("NIFTY", ltp, "CE")
+        if not option_contract:
+            return {"status": "error", "message": "No active option contract found"}
+            
+        trade_token = option_contract["token"]
+        trade_symbol = option_contract["symbol"]
+        lotsize = option_contract["lotsize"]
+        
+        # Premium estimation
+        option_premium = 100.0  # Standard test premium
+        afford_lots = int(capital_limit / (option_premium * lotsize))
+        if afford_lots <= 0:
+            afford_lots = 1
+        qty = afford_lots * lotsize
+        
+        if ws_manager:
+            ws_manager.subscribe_token(trade_token, 2)
+            
+        signal_data.update({
+            'token': trade_token,
+            'symbol': trade_symbol,
+            'qty': qty,
+            'instrument_type': "OPTIONS",
+            'original_signal': "BUY",
+            'underlying_token': token_manager.get_token("NIFTY"),
+            'underlying_entry': ltp,
+            'underlying_sl': ltp - 3.0,
+            'underlying_tp': ltp + 3.0,
+            'actual_entry': option_premium,  # Entry price is the premium
+            'sl': option_premium - 15.0,      # Option premium targets
+            'tp': option_premium + 30.0,
+        })
+    else:
+        signal_data.update({
+            'token': token_manager.get_token("NIFTY"),
+            'qty': 50,
+            'instrument_type': "FUTURES",
+            'original_signal': "BUY"
+        })
+        
     signals.append(signal_data)
     doc_id = db_manager.save_signal(signal_data)
     if doc_id:
@@ -320,6 +427,107 @@ async def square_off():
     await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "success", "message": f"Square Off: {count} trades closed."}
 
+@app.get("/analyze-stock")
+async def analyze_stock(symbol: str):
+    symbol = symbol.upper()
+    from backend.engines.stock_analyzer import stock_analyzer
+    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
+    return res
+
+def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):
+    doc_id = db_manager.save_signal(signal_data)
+    if doc_id:
+        trade_manager.add_trade(signal_data, doc_id)
+        
+    send_push_notification(
+        f"STOCK ALGO: {side} {symbol}",
+        f"Executed {qty} shares of {trading_symbol} @ Rs.{price:.2f}. SL: {signal_data['sl']:.2f}, TP: {signal_data['tp']:.2f}"
+    )
+
+@app.post("/execute-stock-trade")
+async def execute_stock_trade(symbol: str, side: str, background_tasks: BackgroundTasks):
+    # Check if Equity trading is enabled in settings
+    settings = await asyncio.to_thread(db_manager.get_settings) or {}
+    equity_trading = settings.get("equity_trading", True)
+    if not equity_trading:
+        return {"status": "error", "message": "Equity Intraday trading is disabled in settings"}
+
+    symbol = symbol.upper()
+    side = side.upper()
+    if side not in ["BUY", "SELL"]:
+        return {"status": "error", "message": "Invalid transaction side"}
+        
+    from backend.engines.stock_analyzer import stock_analyzer
+    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
+    if res.get("status") == "error":
+        return res
+        
+    token = res["token"]
+    trading_symbol = res["trading_symbol"]
+    price = res["ltp"]
+    
+    settings = db_manager.get_settings() or {}
+    capital_limit = float(settings.get("capital_limit", 10000))
+    
+    if price <= 0:
+        return {"status": "error", "message": "Invalid stock price"}
+        
+    qty = int(capital_limit / price)
+    if qty <= 0:
+        qty = 1
+        
+    signal_data = {
+        "signal": side,
+        "symbol": trading_symbol,
+        "entry": price,
+        "actual_entry": price,
+        "sl": price - (price * 0.02) if side == "BUY" else price + (price * 0.02),
+        "tp": price + (price * 0.04) if side == "BUY" else price - (price * 0.04),
+        "reason": f"ALGO EQUITY {side} - Score: {res['score']}%",
+        "is_paper": is_paper_trading,
+        "timestamp": int(time.time() * 1000),
+        "token": token,
+        "qty": qty,
+        "instrument_type": "EQUITY",
+        "original_signal": side
+    }
+    
+    order_id = None
+    if not is_paper_trading:
+        if not broker.session:
+            broker.login()
+        order_id = broker.place_order(
+            symbol=trading_symbol,
+            token=token,
+            qty=qty,
+            side=side,
+            price=0,
+            order_type="MARKET",
+            exchange="NSE"
+        )
+        if not order_id:
+            return {"status": "error", "message": "Broker execution failed"}
+        signal_data["order_id"] = order_id
+        
+    signals.append(signal_data)
+    
+    background_tasks.add_task(
+        background_save_and_notify,
+        signal_data,
+        side,
+        symbol,
+        qty,
+        trading_symbol,
+        price
+    )
+    
+    return {
+        "status": "success",
+        "message": "Stock trade executed successfully",
+        "order_id": order_id,
+        "trade": signal_data
+    }
+
 async def trading_loop():
     global trading_active, ws_manager
     
@@ -350,14 +558,42 @@ async def trading_loop():
     symbols = ["NIFTY", "BANKNIFTY"]
     while trading_active:
         try:
+            # Check if F&O trading is enabled in settings
+            settings = await asyncio.to_thread(db_manager.get_settings) or {}
+            fno_trading = settings.get("fno_trading", True)
+            if not fno_trading:
+                print("[Loop] F&O Trading is disabled. Skipping cycle.")
+                await asyncio.sleep(5)
+                continue
+
             now = datetime.now()
+            
+            # --- AUTO-SQUAREOFF ---
+            # 3:15 PM forced square-off to avoid broker penalties
+            if now.hour == 15 and now.minute >= 15:
+                print("[Auto-Squareoff] 3:15 PM reached. Squaring off all positions.")
+                await square_off()
+                trading_active = False # Stop trading for the day
+                await asyncio.to_thread(sync_status_to_db)
+                continue
+            
+            # Midnight Reset Check for continuous 24/7 VPS deployments
+            today_date = now.date()
+            global last_reset_date
+            if today_date != last_reset_date:
+                print(f"[Reset] Date changed from {last_reset_date} to {today_date}. Resetting daily risk stats.")
+                risk_manager.reset_daily()
+                last_reset_date = today_date
+
             # Candle Lock Check (Wait for new minute)
             if now.second > 55: await asyncio.sleep(5); continue
 
             for symbol in symbols:
-                # Candle Lock: One trade per symbol per minute
+                # Candle Lock: One check/trade per symbol per minute to prevent rate limiting
                 candle_id = now.strftime("%Y-%m-%d %H:%M")
+                if last_checked_candle[symbol] == candle_id: continue
                 if last_execution_candle[symbol] == candle_id: continue
+                last_checked_candle[symbol] = candle_id
 
                 token = token_manager.get_token(symbol)
                 exchange = token_manager.get_exchange(symbol)
@@ -374,13 +610,7 @@ async def trading_loop():
                 
                 if any(df is None or df.empty for df in [df_1m, df_5m, df_15m, df_1h]): continue
 
-                indicator_tasks = [
-                    asyncio.to_thread(TechnicalIndicators.apply_all, df_1m),
-                    asyncio.to_thread(TechnicalIndicators.apply_all, df_5m),
-                    asyncio.to_thread(TechnicalIndicators.apply_all, df_15m),
-                    asyncio.to_thread(TechnicalIndicators.apply_all, df_1h)
-                ]
-                df_1m, df_5m, df_15m, df_1h = await asyncio.gather(*indicator_tasks)
+                # Active signal engine computes ATR and EMA 50 on the fly; redundant indicator calculations are removed for performance.
                 
                 signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h)
                 side = signal_data['signal']
@@ -395,9 +625,28 @@ async def trading_loop():
                         if not correlation_engine.check_index_alignment(df_5m, df_bn_5m):
                             print(f"[CorrelationGuard] NIFTY/BANKNIFTY divergence detected. Skipping {symbol}.")
                             continue
+                            
+                    # Heavyweight Check: Reliance
+                    rel_token = token_manager.get_token("RELIANCE")
+                    rel_exchange = token_manager.get_exchange("RELIANCE")
+                    if rel_token:
+                        df_rel_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, rel_token, "FIVE_MINUTE", 5, rel_exchange)
+                        await asyncio.sleep(0.4)
+                        if not correlation_engine.check_heavyweight_alignment(symbol, df_5m, df_rel_5m):
+                            continue
+
+                elif symbol == "BANKNIFTY":
+                    # Heavyweight Check: HDFC Bank
+                    hdfc_token = token_manager.get_token("HDFCBANK")
+                    hdfc_exchange = token_manager.get_exchange("HDFCBANK")
+                    if hdfc_token:
+                        df_hdfc_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, hdfc_token, "FIVE_MINUTE", 5, hdfc_exchange)
+                        await asyncio.sleep(0.4)
+                        if not correlation_engine.check_heavyweight_alignment(symbol, df_5m, df_hdfc_5m):
+                            continue
 
                 # --- RISK & NEWS HARD LOCKS ---
-                can_trade, reason = risk_manager.check_hard_locks() if hasattr(risk_manager, 'check_hard_locks') else (True, "OK")
+                can_trade, reason = risk_manager.check_hard_locks(settings) if hasattr(risk_manager, 'check_hard_locks') else (True, "OK")
                 if not can_trade:
                     print(f"[HardLock] {reason}")
                     continue
@@ -408,28 +657,92 @@ async def trading_loop():
                         remaining = int(cooldown_engine.cooldown_period.total_seconds() / 60)
                         print(f"[CooldownEngine] Blocked: {remaining}min cooldown active after last trade.")
                         continue
-                    # Execution
-                    qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol)
+                    # Dynamic Instrument Configuration & Sizing
+                    instrument_type = settings.get("instrument_type", "FUTURES")
+                    
+                    # --- INDIA VIX VOLATILITY GUARD ---
+                    vix_token = token_manager.get_token("INDIA VIX")
+                    vix_exchange = token_manager.get_exchange("INDIA VIX")
+                    if vix_token:
+                        current_vix = broker.get_market_data(vix_exchange, "INDIA VIX", vix_token)
+                        if current_vix and 0 < current_vix < 12:
+                            if instrument_type == "OPTIONS":
+                                print(f"[VIX Guard] Volatility too low ({current_vix}). Switching to FUTURES to prevent Theta decay.")
+                                instrument_type = "FUTURES"
+                                
+                    capital_limit = float(settings.get("capital_limit", 10000))
+                    
+                    trade_symbol = symbol
+                    trade_token = token
+                    trade_side = side
+                    qty = 0
+                    
+                    if instrument_type == "OPTIONS":
+                        option_type = "CE" if side == "BUY" else "PE"
+                        option_contract = token_manager.get_atm_option(symbol, signal_data['entry'], option_type)
+                        if not option_contract:
+                            print(f"[OptionsEngine] ERROR: No active option contract found for {symbol} ATM {option_type}")
+                            continue
+                            
+                        trade_token = option_contract["token"]
+                        trade_symbol = option_contract["symbol"]
+                        lotsize = option_contract["lotsize"]
+                        trade_side = "BUY"  # Options buying is always a BUY order
+                        
+                        # Dynamic position sizing
+                        option_premium = broker.get_market_data("NFO", trade_symbol, trade_token)
+                        if not option_premium or option_premium <= 0:
+                            # Fallback premium estimate (~0.5% of Index LTP)
+                            option_premium = round(signal_data['entry'] * 0.005, 2)
+                            
+                        afford_lots = int(capital_limit / (option_premium * lotsize))
+                        if afford_lots <= 0:
+                            afford_lots = 1
+                        qty = afford_lots * lotsize
+                        
+                        # Dynamic subscription for websocket feed
+                        if ws_manager:
+                            ws_manager.subscribe_token(trade_token, 2)
+                            
+                        # Save options metadata for Synthetic Exits
+                        signal_data.update({
+                            'instrument_type': "OPTIONS",
+                            'original_signal': side,
+                            'underlying_token': token,
+                            'underlying_entry': signal_data['entry'],
+                            'underlying_sl': signal_data['sl'],
+                            'underlying_tp': signal_data['tp'],
+                            'option_premium': option_premium,
+                        })
+                    else:
+                        qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol)
+                        signal_data.update({
+                            'instrument_type': "FUTURES",
+                            'original_signal': side,
+                        })
+                        
                     order_id = None
                     if is_paper_trading:
                         order_id = f"VIRTUAL_{int(time.time())}"
                     else:
-                        order_id = broker.place_order(symbol, token, qty, side, signal_data['entry'])
+                        order_id = broker.place_order(trade_symbol, trade_token, qty, trade_side, signal_data['entry'] if instrument_type == "FUTURES" else option_premium)
                     
                     if order_id:
                         last_execution_candle[symbol] = candle_id
                         risk_manager.record_entry(side)
+                        
+                        # Finalize signal details
                         signal_data.update({
-                            'symbol': symbol,
-                            'actual_entry': signal_data['entry'],
-                            'token': token,
+                            'symbol': trade_symbol,
+                            'actual_entry': signal_data['entry'] if instrument_type == "FUTURES" else option_premium,
+                            'token': trade_token,
                             'qty': qty,
                             'timestamp': int(time.time()*1000)
                         })
                         doc_id = db_manager.save_signal(signal_data)
                         trade_manager.add_trade(signal_data, doc_id)
-                        signals.append(signal_data)  # FIX: Append real signals so /logs works
-                        send_push_notification(f"🚀 SIGNAL: {symbol} {side}", f"Entry: {signal_data['entry']}")
+                        signals.append(signal_data)
+                        send_push_notification(f"🚀 SIGNAL: {trade_symbol} {side}", f"Entry: {signal_data['actual_entry']}")
                         cooldown_engine.update_last_trade()
                         await asyncio.to_thread(sync_status_to_db)
             
