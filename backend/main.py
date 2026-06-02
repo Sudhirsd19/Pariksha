@@ -17,7 +17,7 @@ from backend.execution.broker_api import AngelOneBroker
 from backend.indicators.technical_indicators import TechnicalIndicators
 from backend.market_stream.socket_manager import MarketWebSocket
 from backend.risk_management.risk_manager import RiskManager
-from backend.signal_engine.signal_engine import SignalEngine
+from backend.engines.signal_engine import SignalEngine  # This has check_killzone method
 from backend.utils.historical_data import fetch_historical_data
 from backend.utils.token_manager import token_manager
 from backend.config.firebase_config import init_firebase
@@ -197,29 +197,42 @@ async def toggle_trading(active: bool):
 
 @app.get("/analytics")
 async def get_analytics():
-    # Simulated analytics based on signal count to make it somewhat dynamic
-    base_win_rate = 62.5
-    base_profit_factor = 1.75
-    
-    if signals:
-        bonus = min(len(signals) * 0.5, 10)
-        win_rate = base_win_rate + bonus
-        profit_factor = base_profit_factor + (bonus * 0.05)
-    else:
-        win_rate = base_win_rate
-        profit_factor = base_profit_factor
+    """Returns real analytics from trade_manager."""
+    tm = trade_manager
+    win_rate = (tm.winning_trades / tm.total_trades * 100) if tm.total_trades > 0 else 0.0
+    profit_factor = (tm.gross_profit / tm.gross_loss) if tm.gross_loss > 0 else (tm.gross_profit if tm.gross_profit > 0 else 0.0)
+    avg_winner = (tm.gross_profit / tm.winning_trades) if tm.winning_trades > 0 else 0.0
+    avg_loser = (tm.gross_loss / tm.losing_trades) if tm.losing_trades > 0 else 0.0
 
     return {
         "win_rate": round(win_rate, 1),
         "profit_factor": round(profit_factor, 2),
-        "avg_winner": 2850.0,
-        "avg_loser": 1420.0
+        "avg_winner": round(avg_winner, 2),
+        "avg_loser": round(avg_loser, 2),
+        "total_trades": tm.total_trades,
+        "winning_trades": tm.winning_trades,
+        "losing_trades": tm.losing_trades,
+        "realized_pnl": round(tm.realized_pnl, 2),
+        "total_charges": round(tm.total_charges, 2),
+        "max_drawdown": round(tm.max_drawdown, 2),
+        "pnl_history": tm.pnl_history[-20:]
     }
 
 @app.get("/pnl")
 async def get_pnl():
-    # Deprecated: Now using Firebase PnL
-    pass
+    """Returns real PnL summary from trade_manager."""
+    tm = trade_manager
+    return {
+        "realized_pnl": round(tm.realized_pnl, 2),
+        "total_charges": round(tm.total_charges, 2),
+        "net_pnl": round(tm.realized_pnl - tm.total_charges, 2),
+        "total_trades": tm.total_trades,
+        "winning_trades": tm.winning_trades,
+        "losing_trades": tm.losing_trades,
+        "max_drawdown": round(tm.max_drawdown, 2),
+        "pnl_history": tm.pnl_history[-20:],
+        "active_trades": len(tm.active_trades)
+    }
 
 @app.post("/test-trade")
 async def trigger_test_trade():
