@@ -1,0 +1,23 @@
+# Local files
+backend/data/*.db
+logs/
+.env
+backend/.env
+firebase_credentials.json
+backend/firebase_credentials.json
+
+# Python
+__pycache__/
+*.pyc
+backend/__pycache__/
+backend/*.pyc
+
+# Flutter/Dart build and local files
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+frontend/.dart_tool/
+frontend/.packages
+frontend/build/
