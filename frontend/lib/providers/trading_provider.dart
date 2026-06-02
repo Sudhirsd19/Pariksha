@@ -110,8 +110,18 @@ class TradingProvider with ChangeNotifier {
           _wsConnected = true;
           final jsonData = jsonDecode(data as String);
           _ltp = (jsonData['ltp'] as num?)?.toDouble() ?? _ltp;
-          _sentiment = jsonData['sentiment'] ?? _sentiment;
-          _sentimentScore = (jsonData['sentiment_score'] as num?)?.toDouble() ?? _sentimentScore;
+          
+          // FIX 1: Read all new real-time fields from WebSocket payload
+          if (jsonData['sentiment'] != null) _sentiment = jsonData['sentiment'];
+          if (jsonData['sentiment_score'] != null) {
+            _sentimentScore = (jsonData['sentiment_score'] as num).toDouble();
+          }
+          if (jsonData['in_killzone'] != null) _inKillzone = jsonData['in_killzone'];
+          if (jsonData['is_active'] != null) _isActive = jsonData['is_active'];
+          if (jsonData['trades_today'] != null) _tradesToday = jsonData['trades_today'];
+          if (jsonData['daily_loss'] != null) {
+            _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
+          }
           
           // Throttle UI updates to 10Hz to save CPU
           final now = DateTime.now();

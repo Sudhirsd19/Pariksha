@@ -81,6 +81,24 @@ async def startup_event():
     trade_manager.load_state()
     trade_manager.risk_manager = risk_manager
     persistence_manager.log_event("INFO", "SYSTEM_STARTUP", "QuantumIndex Engine Initialized")
+    
+    # FIX 3: Restore today's daily stats from Firestore on startup
+    # Prevents daily_loss / trades_today reset bypass after Railway restart
+    try:
+        from backend.config.firebase_config import get_db
+        db = get_db()
+        if db:
+            today = datetime.now().strftime("%Y-%m-%d")
+            doc = db.collection("pnl_daily").document(today).get()
+            if doc.exists:
+                data = doc.to_dict()
+                risk_manager.daily_loss = abs(float(data.get("total_pnl", 0))) if float(data.get("total_pnl", 0)) < 0 else 0
+                risk_manager.trades_today = int(data.get("total_trades", 0))
+                persistence_manager.log_event("INFO", "DAILY_RESTORE", f"Restored: trades={risk_manager.trades_today}, loss=₹{risk_manager.daily_loss:.2f}")
+                print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=₹{risk_manager.daily_loss:.2f}")
+    except Exception as e:
+        print(f"[Startup] Could not restore daily stats: {e}")
+    
     asyncio.create_task(ltp_broadcaster())
 
 async def ltp_broadcaster():
@@ -125,10 +143,30 @@ async def ltp_broadcaster():
             # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
             if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
                 last_broadcast_ltp = current_ltp
-                payload = json.dumps({"ltp": current_ltp, "ltps": current_ltps, "connected": True})
+                
+                # FIX 1: Include sentiment, killzone & score in WS payload
+                # Frontend trading_provider.dart reads these from WebSocket
+                now_time = datetime.now().time()
+                ws_sentiment = "Neutral"
+                ws_sentiment_score = 0.5
+                if signals:
+                    ws_sentiment = "Bullish" if signals[-1].get('signal') == "BUY" else "Bearish"
+                    ws_sentiment_score = 0.8 if ws_sentiment == "Bullish" else 0.2
+                
+                payload = json.dumps({
+                    "ltp": current_ltp,
+                    "ltps": current_ltps,
+                    "connected": True,
+                    "sentiment": ws_sentiment,
+                    "sentiment_score": ws_sentiment_score,
+                    "in_killzone": signal_engine.check_killzone(now_time),
+                    "is_active": trading_active,
+                    "trades_today": risk_manager.trades_today,
+                    "daily_loss": risk_manager.daily_loss,
+                })
                 for client in list(connected_ws_clients):
                     try: await client.send_text(payload)
-                    except: connected_ws_clients.discard(client)
+                    except Exception: connected_ws_clients.discard(client)
 
         except Exception as e:
             print(f"[Broadcaster Error]: {e}")
@@ -361,6 +399,11 @@ async def trading_loop():
                     continue
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
+                    # FIX 2: CooldownEngine check — prevents trades within 10 min window
+                    if not cooldown_engine.can_trade():
+                        remaining = int(cooldown_engine.cooldown_period.total_seconds() / 60)
+                        print(f"[CooldownEngine] Blocked: {remaining}min cooldown active after last trade.")
+                        continue
                     # Execution
                     qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol)
                     order_id = None
