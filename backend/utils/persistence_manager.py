@@ -62,7 +62,7 @@ class PersistenceManager:
                 trade_data['id'], trade_data['symbol'], trade_data['token'], 
                 trade_data['signal'], trade_data['entry'], trade_data['sl'], 
                 trade_data['tp'], trade_data['qty'], "OPEN", 
-                trade_data['timestamp'], json.dumps(trade_data)
+                trade_data.get('entry_time') or trade_data.get('timestamp'), json.dumps(trade_data)
             ))
             conn.commit()
 

@@ -187,11 +187,9 @@ class TradeManager:
         for trade in self.active_trades:
             token = trade.get("token")
             if not token or token not in ltp_dict:
-                # If we don't have LTP, we use a slightly stale entry price or skip
-                # but for safety in square-off, we try to use any available data
-                continue
-                
-            exit_price = ltp_dict[token]
+                exit_price = trade["entry"]
+            else:
+                exit_price = ltp_dict[token]
             
             if trade["signal"] == "BUY":
                 pnl = (exit_price - trade["entry"]) * trade["qty"]

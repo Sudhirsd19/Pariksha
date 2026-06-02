@@ -279,6 +279,7 @@ async def trigger_test_trade():
     signal_data = {
         "signal": "BUY",
         "symbol": "NIFTY",
+        "token": token_manager.get_token("NIFTY"),  # FIX: Assign NIFTY token so trade is monitored
         "entry": ltp,
         "actual_entry": ltp + 0.5,
         "sl": ltp - 3.0,
@@ -301,8 +302,11 @@ async def emergency_kill():
     global trading_active
     trading_active = False
     persistence_manager.log_event("CRITICAL", "KILL_SWITCH_ACTIVATED", "User triggered emergency shutdown")
-    count = trade_manager.emergency_square_off({}) # Square off all active trades
+    # FIX: Pass real LTP dict so trade PnL is calculated correctly on close
+    ltp_dict = ws_manager.ltp_data if ws_manager else {}
+    count = trade_manager.emergency_square_off(ltp_dict)
     broker.square_off_all()
+    await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "killed", "trades_closed": count}
 
 @app.post("/square-off")
@@ -313,7 +317,7 @@ async def square_off():
     broker.square_off_all()
     ltp_dict = ws_manager.ltp_data if ws_manager else {}
     count = trade_manager.emergency_square_off(ltp_dict)
-    sync_status_to_db()
+    await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "success", "message": f"Square Off: {count} trades closed."}
 
 async def trading_loop():
@@ -415,9 +419,16 @@ async def trading_loop():
                     if order_id:
                         last_execution_candle[symbol] = candle_id
                         risk_manager.record_entry(side)
-                        signal_data.update({'actual_entry': signal_data['entry'], 'token': token, 'qty': qty, 'timestamp': int(time.time()*1000)})
+                        signal_data.update({
+                            'symbol': symbol,
+                            'actual_entry': signal_data['entry'],
+                            'token': token,
+                            'qty': qty,
+                            'timestamp': int(time.time()*1000)
+                        })
                         doc_id = db_manager.save_signal(signal_data)
                         trade_manager.add_trade(signal_data, doc_id)
+                        signals.append(signal_data)  # FIX: Append real signals so /logs works
                         send_push_notification(f"🚀 SIGNAL: {symbol} {side}", f"Entry: {signal_data['entry']}")
                         cooldown_engine.update_last_trade()
                         await asyncio.to_thread(sync_status_to_db)

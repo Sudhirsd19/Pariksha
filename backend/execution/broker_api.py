@@ -6,6 +6,7 @@ class AngelOneBroker:
     def __init__(self):
         self.smart_api = SmartConnect(api_key=config.ANGEL_API_KEY)
         self.session = None
+        self.feed_token = None  # FIX: Initialize so attribute always exists before login
 
     def login(self):
         """
@@ -19,36 +20,36 @@ class AngelOneBroker:
             totp = pyotp.TOTP(config.ANGEL_TOTP_KEY).now()
             data = self.smart_api.generateSession(config.ANGEL_CLIENT_ID, config.ANGEL_PIN, totp)
 
-            
-            if data['status']:
+            if data.get('status'):  # FIX: use .get() to avoid KeyError on unexpected response
                 self.session = data['data']
-                # Feed token is needed for WebSocket
                 self.feed_token = self.smart_api.getfeedToken()
                 print("SUCCESS: Angel One Login Successful")
                 return True
             else:
-                print(f"FAILED: Angel One Login: {data['message']}")
+                print(f"FAILED: Angel One Login: {data.get('message', 'Unknown error')}")
                 return False
         except Exception as e:
             print(f"EXCEPTION during login: {e}")
             return False
 
-    def place_order(self, symbol, token, qty, side, price, order_type="MARKET"):
+    def place_order(self, symbol, token, qty, side, price=0, order_type="MARKET"):
         """
         Place a trade order with slippage protection.
         side: BUY or SELL
+        price: 0 for MARKET orders (broker ignores price for MARKET type)
         """
         if not self.session:
             print("ERROR: No active session. Please login first.")
             return None
 
-        # --- PRODUCTION SAFETY: Slippage & Spread Check ---
-        current_ltp = self.get_market_data("NFO", symbol, token)
-        if current_ltp > 0:
-            slippage = abs(current_ltp - price) / price
-            if slippage > 0.005: # 0.5% max slippage
-                print(f"[Broker] BLOCKED: High slippage detected ({slippage:.4f})")
-                return None
+        # --- PRODUCTION SAFETY: Slippage & Spread Check (only for LIMIT orders) ---
+        if order_type == "LIMIT" and price > 0:
+            current_ltp = self.get_market_data("NFO", symbol, token)
+            if current_ltp > 0:
+                slippage = abs(current_ltp - price) / price
+                if slippage > 0.005:  # 0.5% max slippage
+                    print(f"[Broker] BLOCKED: High slippage detected ({slippage:.4f})")
+                    return None
 
         try:
             order_params = {
@@ -63,8 +64,12 @@ class AngelOneBroker:
                 "quantity": qty
             }
             res = self.smart_api.placeOrder(order_params)
-            if res['status']:
-                return res['data']['orderid']
+            if res and res.get('status'):  # FIX: guard against None response
+                order_data = res.get('data') or {}
+                order_id = order_data.get('orderid')
+                if order_id:
+                    return order_id
+            print(f"[Broker] Order failed: {res.get('message', 'No response') if res else 'None response'}")
             return None
         except Exception as e:
             print(f"ERROR placing order for {symbol}: {e}")
@@ -73,7 +78,7 @@ class AngelOneBroker:
     def get_order_status(self, order_id):
         try:
             res = self.smart_api.orderBook()
-            if res['status'] and res['data']:
+            if res and res.get('status') and res.get('data'):
                 for order in res['data']:
                     if order['orderid'] == order_id:
                         return order['status']
@@ -82,14 +87,13 @@ class AngelOneBroker:
             print(f"ERROR fetching order status: {e}")
             return "ERROR"
 
-
     def get_market_data(self, exchange, symbol, token):
         """
         Fetch Last Traded Price (LTP) for a token.
         """
         try:
             data = self.smart_api.ltpData(exchange, symbol, token)
-            if data['status']:
+            if data and data.get('status'):  # FIX: guard against None
                 return data['data']['ltp']
         except Exception as e:
             print(f"ERROR fetching market data for {symbol}: {e}")
@@ -97,26 +101,30 @@ class AngelOneBroker:
 
     def square_off_all(self):
         """
-        Fetch all open positions and close them.
+        Fetch all open positions and close them at MARKET price.
+        FIX: price param is now optional (default 0) for MARKET orders — was crashing with TypeError.
         """
         if not self.session:
             return False
-        
+
         try:
             positions = self.smart_api.position()
-            if positions['status'] and positions['data']:
+            if positions and positions.get('status') and positions.get('data'):
                 for pos in positions['data']:
-                    net_qty = int(pos['netqty'])
+                    net_qty = int(pos.get('netqty', 0))
                     if net_qty != 0:
                         side = "SELL" if net_qty > 0 else "BUY"
-                        self.place_order(
+                        result = self.place_order(
                             symbol=pos['tradingsymbol'],
                             token=pos['symboltoken'],
                             qty=abs(net_qty),
-                            side=side
+                            side=side,
+                            price=0,           # FIX: MARKET order — price is ignored by broker
+                            order_type="MARKET"
                         )
-                return True
+                        if not result:
+                            print(f"[SquareOff] WARNING: Failed to close {pos['tradingsymbol']}")
+            return True
         except Exception as e:
             print(f"ERROR during square off: {e}")
         return False
-

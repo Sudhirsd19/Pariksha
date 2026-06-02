@@ -5,6 +5,14 @@ import datetime
 class SignalEngine:
     def __init__(self):
         self.min_score = 6
+        self._struct_engine = None  # FIX: Lazy init once, not on every signal call
+
+    @property
+    def struct_engine(self):
+        if self._struct_engine is None:
+            from backend.engines.structure_engine import StructureEngine
+            self._struct_engine = StructureEngine()
+        return self._struct_engine
 
     def detect_market_phase(self, df):
         """Classify market phase: Trending, Expansion, Consolidation."""
@@ -122,23 +130,33 @@ class SignalEngine:
 
     def generate_signal(self, df_1m, df_5m, df_15m, df_1h):
         """Wrapper for main.py — uses ATR-based TP/SL and Order Block validation."""
-        from backend.engines.structure_engine import StructureEngine
-        struct_engine = StructureEngine()
-        structure_data = struct_engine.analyze(df_15m)
+        structure_data = self.struct_engine.analyze(df_15m)  # FIX: reuse from __init__
 
+        # FIX: PDH/PDL — use actual previous session high/low, not the whole fetched window
+        # df_1h has ~30 candles; iloc[0] is oldest (yesterday+), iloc[-1] is latest (today)
+        # Exclude last candle (today partial) to get previous session range
+        prev_candles = df_1h.iloc[:-1] if len(df_1h) > 1 else df_1h
         daily_data = {
-            'open': df_1h['open'].iloc[0],
-            'pdh': df_1h['high'].max(),
-            'pdl': df_1h['low'].min()
+            'open': df_1h.iloc[-1]['open'],   # Today's open (last hourly candle open)
+            'pdh': prev_candles['high'].max(), # Previous session high
+            'pdl': prev_candles['low'].min()   # Previous session low
         }
 
         eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True})
 
-        # --- ATR-based Dynamic TP/SL (2:1 Risk-Reward Ratio) ---
-        atr_14 = (df_5m['high'].rolling(14).max() - df_5m['low'].rolling(14).min()).iloc[-1]
+        # FIX: Proper ATR — rolling mean of true ranges, not raw high-low range
+        # The old calculation was: (rolling_max - rolling_min) which is a range, not ATR
+        high_low = df_5m['high'] - df_5m['low']
+        high_close = (df_5m['high'] - df_5m['close'].shift()).abs()
+        low_close = (df_5m['low'] - df_5m['close'].shift()).abs()
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr_14 = true_range.rolling(14).mean().iloc[-1]
+        if atr_14 != atr_14 or atr_14 == 0:  # NaN or zero fallback
+            atr_14 = 30.0
+
         atr_multiplier_sl = 1.5
         atr_multiplier_tp = 3.0  # 2:1 RRR
-        
+
         entry = df_1m['close'].iloc[-1]
         side = eval_result['side']
 
@@ -156,15 +174,16 @@ class SignalEngine:
         ob_valid = struct_engine.validate_order_block(df_5m, len(df_5m) - 1)
 
         return {
-            'signal': side,
+            'signal': side if side else 'NO TRADE',  # FIX: return string not None
             'entry': round(entry, 2),
             'sl': round(sl, 2),
             'tp': round(tp, 2),
             'atr': round(atr_14, 2),
-            'order_block_valid': ob_valid,
+            'score': eval_result.get('score', 0),
+            'order_block_valid': self.struct_engine.validate_order_block(df_5m, len(df_5m) - 1),
             'reason': (
                 f"SMC | Score: {eval_result['score']} | Phase: {eval_result['phase']} | "
-                f"Killzone: {eval_result['in_killzone']} | OB: {ob_valid} | "
+                f"Killzone: {eval_result['in_killzone']} | "
                 f"ATR SL: {round(atr_14 * atr_multiplier_sl, 1)} pts"
             )
         }
