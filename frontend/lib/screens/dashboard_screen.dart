@@ -119,9 +119,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         final now = DateTime.now();
                         final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
                         final todayTrades = tradingProvider.signals.where((sig) {
-                          final int ts = sig['timestamp'] is int 
-                              ? sig['timestamp'] 
-                              : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                          final int ts = sig['timestamp'] is num 
+                              ? (sig['timestamp'] as num).toInt() 
+                              : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
                           return ts >= todayStart;
                         }).toList();
 
@@ -247,9 +247,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         final now = DateTime.now();
                         final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
                         final activeToday = tradingProvider.signals.where((sig) {
-                          final int ts = sig['timestamp'] is int 
-                              ? sig['timestamp'] 
-                              : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                          final int ts = sig['timestamp'] is num 
+                              ? (sig['timestamp'] as num).toInt() 
+                              : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
                           return sig['status'] != 'CLOSED' && ts >= todayStart;
                         }).toList();
 
@@ -555,7 +555,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Format timestamp if it's a number
     String timeStr = 'NOW';
     if (sig['timestamp'] != null) {
-      final dt = DateTime.fromMillisecondsSinceEpoch(sig['timestamp'] is int ? sig['timestamp'] : int.tryParse(sig['timestamp'].toString()) ?? 0);
+      final int ts = sig['timestamp'] is num ? (sig['timestamp'] as num).toInt() : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+      final dt = DateTime.fromMillisecondsSinceEpoch(ts);
       timeStr = "${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}:${dt.second.toString().padLeft(2,'0')}";
     }
     

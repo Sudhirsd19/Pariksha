@@ -459,9 +459,9 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final activeTrade = provider.signals.firstWhere(
       (sig) {
-        final int ts = sig['timestamp'] is int 
-            ? sig['timestamp'] 
-            : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+        final int ts = sig['timestamp'] is num 
+            ? (sig['timestamp'] as num).toInt() 
+            : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
         return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
                sig['status'] != "CLOSED" && 
                ts >= todayStart;
@@ -925,9 +925,9 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
               final activeTrade = provider.signals.firstWhere(
                 (sig) {
-                  final int ts = sig['timestamp'] is int 
-                      ? sig['timestamp'] 
-                      : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                  final int ts = sig['timestamp'] is num 
+                      ? (sig['timestamp'] as num).toInt() 
+                      : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
                   return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
                          sig['status'] != "CLOSED" && 
                          ts >= todayStart;
