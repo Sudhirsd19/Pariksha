@@ -88,6 +88,39 @@ class PersistenceManager:
                 if trade['metadata']:
                     meta = json.loads(trade['metadata'])
                     trade.update(meta)
+                # Map timestamp from sqlite entry_time for frontend compatibility
+                trade['timestamp'] = row['entry_time']
+                trades.append(trade)
+            return trades
+
+    def get_todays_trades(self):
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        start_of_day_ist = datetime.now(ist_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM trades WHERE entry_time >= ? ORDER BY entry_time ASC", (start_of_day_ms,))
+            rows = cursor.fetchall()
+            trades = []
+            for row in rows:
+                trade = dict(row)
+                if trade['metadata']:
+                    meta = json.loads(trade['metadata'])
+                    trade.update(meta)
+                db_status = row['status']
+                if db_status in ['STOPLOSS', 'TARGET', 'SQUARE_OFF', 'CLOSED']:
+                    trade['status'] = 'CLOSED'
+                    trade['result'] = db_status
+                else:
+                    trade['status'] = db_status
+                trade['exit_price'] = row['exit_price']
+                trade['exit_time'] = row['exit_time']
+                trade['pnl'] = row['pnl']
+                # Map timestamp from sqlite entry_time for frontend compatibility
+                trade['timestamp'] = row['entry_time']
                 trades.append(trade)
             return trades
 

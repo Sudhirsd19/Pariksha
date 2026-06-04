@@ -38,6 +38,7 @@ class TradeManager:
             "atr": signal_data.get("atr", 0),  # For Trailing SL
             "status": "OPEN",
             "entry_time": signal_data["timestamp"],
+            "timestamp": signal_data["timestamp"],
             
             # Options specific parameters
             "instrument_type": signal_data.get("instrument_type", "FUTURES"),

@@ -96,6 +96,9 @@ class TradingProvider with ChangeNotifier {
     _initFirestoreListeners();
     _connectWebSocket();
     _startWatchlistRefreshTimer();
+    
+    // Fallback polling for logs/signals to support local SQLite data display when Firestore quota is exceeded
+    Timer.periodic(const Duration(seconds: 5), (_) => fetchLogs());
   }
 
   void _connectWebSocket() {

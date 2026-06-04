@@ -142,7 +142,20 @@ async def startup_event():
             print(f"[Startup] Restored {restored_count} signals from Firestore.")
             persistence_manager.log_event("INFO", "SIGNALS_RESTORE", f"Restored {restored_count} signals from Firestore.")
     except Exception as e:
-        print(f"[Startup] Could not restore daily stats or signals: {e}")
+        print(f"[Startup] Could not restore daily stats or signals from Firestore (falling back to SQLite): {e}")
+        try:
+            # Fallback to local SQLite to restore signals and daily stats
+            signals = persistence_manager.get_todays_trades()
+            closed_today = [s for s in signals if s.get("status") == "CLOSED"]
+            risk_manager.trades_today = len(closed_today)
+            
+            daily_pnl = sum(float(s.get("pnl", 0)) for s in closed_today)
+            risk_manager.daily_loss = abs(daily_pnl) if daily_pnl < 0 else 0
+            
+            print(f"[Startup] SQLite Fallback: Restored today's stats: trades={risk_manager.trades_today}, daily_loss=Rs.{risk_manager.daily_loss:.2f}")
+            persistence_manager.log_event("INFO", "DAILY_RESTORE_SQLITE", f"SQLite Fallback Restored: trades={risk_manager.trades_today}, loss=Rs.{risk_manager.daily_loss:.2f}")
+        except Exception as sq_err:
+            print(f"[Startup] Could not restore stats from SQLite: {sq_err}")
     
     asyncio.create_task(ltp_broadcaster())
 
@@ -280,7 +293,11 @@ async def refresh_signals():
                 new_signals.append(trade_data)
             signals = new_signals
     except Exception as e:
-        print(f"Error refreshing signals from Firestore: {e}")
+        print(f"Error refreshing signals from Firestore (falling back to SQLite): {e}")
+        try:
+            signals = persistence_manager.get_todays_trades()
+        except Exception as sq_err:
+            print(f"Failed to fetch todays signals from local SQLite: {sq_err}")
 
 @app.get("/logs")
 async def get_logs():
