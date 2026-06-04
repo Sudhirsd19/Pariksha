@@ -486,6 +486,108 @@ async def search_stocks(q: str = ""):
     results.sort(key=lambda x: (not x["name"].startswith(query), len(x["name"])))
     return results[:30]
 
+# Top ~250 liquid NSE stocks for smart screener (F&O + NIFTY 500 core)
+SCREENER_UNIVERSE = [
+    "RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK","SBIN","BHARTIARTL","WIPRO","TATASTEEL",
+    "ADANIPORTS","LT","AXISBANK","KOTAKBANK","BAJFINANCE","HCLTECH","SUNPHARMA","ONGC",
+    "MARUTI","NTPC","POWERGRID","COALINDIA","TITAN","BAJAJFINSV","M&M","NESTLEIND",
+    "TECHM","ULTRACEMCO","ASIANPAINT","JSWSTEEL","HINDALCO","GRASIM","DRREDDY","DIVISLAB",
+    "HDFCLIFE","SBILIFE","CIPLA","EICHERMOT","APOLLOHOSP","TATACONSUM","BRITANNIA",
+    "INDUSINDBK","HEROMOTOCO","BPCL","SHREECEM","PIIND","GLAND","MUTHOOTFIN","BANKBARODA",
+    "PNB","CANBK","FEDERALBNK","IDFCFIRSTB","RBLBANK","BANDHANBNK","AUBANK","INDIGO",
+    "INTERGLOBE","SPICEJET","IRCTC","ZOMATO","NYKAA","PAYTM","POLICYBZR","CARTRADE",
+    "DELHIVERY","MAPMYINDIA","HAL","BEL","BHEL","SAIL","NMDC","GAIL","IGL","MGL",
+    "PETRONET","IOC","HPCL","HINDPETRO","MRPL","CPCL","CHENNPETRO","APLAPOLLO",
+    "HINDZINC","NATIONALUM","WELCORP","RATNAMANI","MAHINDCIE","TATAELXSI","MPHASIS",
+    "LTTS","PERSISTENT","COFORGE","HAPPSTMNDS","MINDTREE","OFSS","NIITTECH","KPITTECH",
+    "CYIENT","MASTEK","ZENSAR","HEXAWARE","RAMSARUP","HAVELLS","VOLTAS","CROMPTON",
+    "POLYCAB","KEI","FINCABLES","KTKBANK","SOUTHBANK","DCBBANK","UJJIVANSFB","ESAFSFB",
+    "EQUITASBNK","SURYODAY","REPCO","MANAPPURAM","CHOLAFIN","SHRIRAMFIN","BAJAJHFL",
+    "LICHSGFIN","PNBHOUSING","CANFINHOME","GRUH","AAVAS","HOMEFIRST","APTUS","FIVE STAR",
+    "CREDITACC","ARMANFIN","SBFC","MOTILALOFS","ANGELONE","5PAISA","ICICIGI","NIACL",
+    "STARHEALTH","GODIGIT","GICRE","ORIENTINS","NEWGEN","ROUTES","CAMPUS","METAHEALTH",
+    "TATAMOTORS","M&MFIN","ASHOKLEY","ESCORTS","TIINDIA","MOTHERSON","BALKRISIND",
+    "MRF","APOLLOTYRE","CEATLTD","GOODYEAR","JKTYRE","TVSMOTORS","BAJAJ-AUTO","ROYALENFIELD",
+    "FORCE","SUNDRMFAST","BOSCHLTD","WABCOINDIA","ENDURANCE","SUPRAJIT","GABRIEL",
+    "SHARDACROP","ASTRAL","SUPRIYA","ALKYLAMINE","DEEPAKNITR","GNFC","GSFC","FACT",
+    "COROMANDEL","RALLIS","PI","DHANUKA","INSECTICID","ASTERDM","METROPOLIS","THYROCARE",
+    "KRSNAA","VIJAYABANK","LATENTVIEW","ROUTE","AWFIS","YATRA","EASEMYTRIP","THOMAS",
+    "LAXMIMACH","HEG","GRAPHITE","INOXWIND","SUZLON","GREENKO","RENEW","TORNTPOWER",
+    "ADANIGREEN","TATAPOWER","CESC","KSKPOWER","RPOWER","ORIENTELEC","JPPOWER","NHPC",
+    "SJVN","IRPOWER","NPTC","INOXGFL","CLEAN","GREENPANEL","CENTURY","WPIL","GODREJCP",
+    "DABUR","MARICO","EMAMILTD","COLPAL","GILLETTE","PG","JYOTHYLAB","VBL","RADICO",
+    "GLOBUSSPR","ABCAPITAL","EDELWEISS","IFCI","PFC","REC","IRFC","HUDCO","NABFID"
+]
+
+@app.get("/smart-screener")
+async def smart_screener(max_price: float = 500.0):
+    """
+    Bulk screen NSE stocks: fetch prices via yfinance, filter by max_price,
+    run full analysis in parallel, return only score=100 stocks.
+    """
+    import yfinance as yf
+    from backend.engines.stock_analyzer import stock_analyzer
+
+    # Step 1: Bulk price fetch
+    tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
+    try:
+        raw = await asyncio.to_thread(
+            lambda: yf.download(tickers, period="1d", interval="1d", progress=False, threads=True)
+        )
+        # raw["Close"] is a DataFrame with columns = ticker symbols
+        close_row = raw["Close"].iloc[-1] if not raw.empty else {}
+        price_map = {}
+        for sym in SCREENER_UNIVERSE:
+            col = f"{sym}.NS"
+            val = close_row.get(col)
+            if val is not None and not (hasattr(val, '__float__') and val != val):  # nan check
+                try:
+                    price_map[sym] = float(val)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[SmartScreener] Bulk price fetch failed: {e}")
+        price_map = {}
+
+    # Step 2: Filter by price
+    affordable = [s for s in SCREENER_UNIVERSE if price_map.get(s, 9999) <= max_price]
+    if not affordable:
+        return {"status": "success", "results": [], "scanned": 0, "affordable": 0}
+
+    # Step 3: Run full analysis in parallel (max 20 at a time to avoid overload)
+    async def analyze_one(sym):
+        try:
+            res = await stock_analyzer.analyze_stock(sym, broker.smart_api)
+            if res and res.get("status") == "success":
+                return res
+        except Exception:
+            pass
+        return None
+
+    tasks = [analyze_one(sym) for sym in affordable[:20]]  # cap at 20
+    results_raw = await asyncio.gather(*tasks)
+
+    # Step 4: Filter score == 100
+    top_picks = [
+        {
+            "symbol": r["symbol"],
+            "ltp": r["ltp"],
+            "score": r["score"],
+            "htf_trend": r["htf_trend"],
+            "value_zone": r["value_zone"],
+        }
+        for r in results_raw if r and r.get("score", 0) == 100
+    ]
+    # Sort by price ascending
+    top_picks.sort(key=lambda x: x["ltp"])
+
+    return {
+        "status": "success",
+        "results": top_picks,
+        "scanned": len(affordable),
+        "affordable": len(affordable),
+    }
+
 @app.get("/analyze-stock")
 async def analyze_stock(symbol: str):
     symbol = symbol.upper()

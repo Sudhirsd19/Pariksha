@@ -89,6 +89,20 @@ class ApiService {
     return [];
   }
 
+  Future<Map<String, dynamic>?> smartScreener(double maxPrice) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/smart-screener?max_price=$maxPrice'),
+      ).timeout(const Duration(seconds: 120));
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("Error in smart screener: $e");
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>?> analyzeStock(String symbol) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/analyze-stock?symbol=$symbol'));
