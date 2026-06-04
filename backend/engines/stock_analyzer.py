@@ -49,7 +49,21 @@ class StockAnalyzer:
         exchange = "NSE"  # Equity cash is on NSE
         trading_symbol = stock_info["symbol"]
 
-        # 2. Fetch candles asynchronously via threads
+        # 2. Fetch LTP from yfinance (free, no auth) as reliable real-time price
+        real_ltp = None
+        if yf:
+            try:
+                ticker_obj = yf.Ticker(f"{symbol}.NS")
+                hist = ticker_obj.history(period="1d", interval="1m")
+                if not hist.empty:
+                    real_ltp = float(hist["Close"].iloc[-1])
+                if real_ltp is None or real_ltp <= 0:
+                    # fallback: fast_info
+                    real_ltp = float(ticker_obj.fast_info.get("last_price", 0) or 0)
+            except Exception as e:
+                print(f"[StockAnalyzer] yfinance LTP fetch failed for {symbol}: {e}")
+
+        # 3. Fetch candles asynchronously via threads
         # We need daily candles for 50 EMA (say 80 days to be safe)
         # We need 5M candles for market structure (say 5 days)
         df_1d = None
@@ -68,13 +82,16 @@ class StockAnalyzer:
             except Exception as e:
                 print(f"[StockAnalyzer] Error fetching candles for {symbol}: {e}")
 
+        # Use real_ltp as base for mock candles so LTP stays accurate
+        mock_base = real_ltp if (real_ltp and real_ltp > 0) else 500.0
+
         # If offline or data failed, create mock/simulated candles for demonstration
         if df_1d is None or df_1d.empty:
-            df_1d = self._create_mock_candles(interval="ONE_DAY", count=80, base_price=2500)
+            df_1d = self._create_mock_candles(interval="ONE_DAY", count=80, base_price=mock_base)
         if df_5m is None or df_5m.empty:
-            df_5m = self._create_mock_candles(interval="FIVE_MINUTE", count=100, base_price=2500)
+            df_5m = self._create_mock_candles(interval="FIVE_MINUTE", count=100, base_price=mock_base)
 
-        # 3. Technical checks
+        # 4. Technical checks
         # Calculate EMA 50 on Daily candles
         df_1d = TechnicalIndicators.add_ema(df_1d, 50)
         last_1d = df_1d.iloc[-1]
@@ -204,7 +221,7 @@ class StockAnalyzer:
             "symbol": symbol,
             "token": token,
             "trading_symbol": trading_symbol,
-            "ltp": float(close_1d),
+            "ltp": real_ltp if (real_ltp and real_ltp > 0) else float(close_1d),
             "score": score,
             "actionable": actionable,
             "htf_trend": htf_trend,
