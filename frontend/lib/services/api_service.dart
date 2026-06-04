@@ -115,10 +115,10 @@ class ApiService {
     return null;
   }
 
-  Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side) async {
+  Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side, int qty) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/execute-stock-trade?symbol=$symbol&side=$side'),
+        Uri.parse('$baseUrl/execute-stock-trade?symbol=$symbol&side=$side&qty=$qty'),
       );
       if (response.statusCode == 200) {
         return json.decode(response.body);

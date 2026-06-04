@@ -99,6 +99,13 @@ async def startup_event():
     # Resume state from local SQLite
     trade_manager.load_state()
     trade_manager.risk_manager = risk_manager
+    
+    # Try to login to broker on startup to generate active session
+    try:
+        broker.login()
+    except Exception as e:
+        print(f"[Startup] Angel One Login failed: {e}")
+        
     persistence_manager.log_event("INFO", "SYSTEM_STARTUP", "QuantumIndex Engine Initialized")
     
     # FIX 3: Restore today's daily stats from Firestore on startup
@@ -164,6 +171,12 @@ async def ltp_broadcaster():
                     if tok:
                         active_trade_tokens.append(tok)
 
+            # Clean up simulated_ltps for inactive trade tokens
+            default_tokens = set(tokens.values())
+            for t_key in list(simulated_ltps.keys()):
+                if t_key not in active_trade_tokens and t_key not in default_tokens:
+                    del simulated_ltps[t_key]
+
             current_ltps = {}
             for symbol, token in tokens.items():
                 # Get live price if healthy, otherwise use simulation if in paper trading
@@ -197,7 +210,9 @@ async def ltp_broadcaster():
                                     break
                         simulated_ltps[token] = entry_premium
                     
-                    drift = random.uniform(-0.5, 0.5)
+                    # Scaled drift: max 0.05% of the asset price per tick (e.g. max 0.06 for 120 Rs stock)
+                    max_drift = max(0.01, simulated_ltps[token] * 0.0005)
+                    drift = random.uniform(-max_drift, max_drift)
                     simulated_ltps[token] = max(1.0, round(simulated_ltps[token] + drift, 2))
                     ltp = simulated_ltps[token]
                 else:
@@ -528,6 +543,15 @@ async def smart_screener(max_price: float = 500.0):
     import yfinance as yf
     from backend.engines.stock_analyzer import stock_analyzer
 
+    # Ensure active session if possible, otherwise run offline/mock
+    if not broker.session:
+        try:
+            broker.login()
+        except Exception as e:
+            print(f"[SmartScreener] Startup-fallback broker login failed: {e}")
+
+    api_client = broker.smart_api if broker.session else None
+
     # Step 1: Bulk price fetch
     tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
     try:
@@ -554,18 +578,23 @@ async def smart_screener(max_price: float = 500.0):
     if not affordable:
         return {"status": "success", "results": [], "scanned": 0, "affordable": 0}
 
-    # Step 3: Run full analysis in parallel (max 20 at a time to avoid overload)
+    # Step 3: Run full analysis sequentially with throttling to avoid AngelOne rate limit (3 req/sec)
     async def analyze_one(sym):
         try:
-            res = await stock_analyzer.analyze_stock(sym, broker.smart_api)
+            res = await stock_analyzer.analyze_stock(sym, api_client)
             if res and res.get("status") == "success":
                 return res
         except Exception:
             pass
         return None
 
-    tasks = [analyze_one(sym) for sym in affordable[:20]]  # cap at 20
-    results_raw = await asyncio.gather(*tasks)
+    results_raw = []
+    for sym in affordable[:20]:  # cap at 20
+        res = await analyze_one(sym)
+        results_raw.append(res)
+        if api_client:
+            # Each stock analysis makes 2 API calls, so sleep 0.75s to stay well below 3 req/sec limit
+            await asyncio.sleep(0.75)
 
     # Step 4: Filter score == 100
     top_picks = [
@@ -592,7 +621,15 @@ async def smart_screener(max_price: float = 500.0):
 async def analyze_stock(symbol: str):
     symbol = symbol.upper()
     from backend.engines.stock_analyzer import stock_analyzer
-    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
+    
+    if not broker.session:
+        try:
+            broker.login()
+        except Exception as e:
+            print(f"[AnalyzeStock] Startup-fallback broker login failed: {e}")
+            
+    api_client = broker.smart_api if broker.session else None
+    res = await stock_analyzer.analyze_stock(symbol, api_client)
     return res
 
 def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):
@@ -606,7 +643,7 @@ def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, p
     )
 
 @app.post("/execute-stock-trade")
-async def execute_stock_trade(symbol: str, side: str, background_tasks: BackgroundTasks):
+async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_tasks: BackgroundTasks = None):
     # Check if Equity trading is enabled in settings
     settings = await asyncio.to_thread(db_manager.get_settings) or {}
     equity_trading = settings.get("equity_trading", True)
@@ -618,6 +655,18 @@ async def execute_stock_trade(symbol: str, side: str, background_tasks: Backgrou
     if side not in ["BUY", "SELL"]:
         return {"status": "error", "message": "Invalid transaction side"}
         
+    # Daily Trade Check: prevent trading the same stock symbol if it has already been traded and closed today
+    symbol_closed_trades = [
+        sig for sig in signals 
+        if (sig.get("symbol") == symbol or sig.get("symbol") == f"{symbol}-EQ") 
+        and sig.get("status") == "CLOSED"
+    ]
+    if symbol_closed_trades:
+        return {
+            "status": "error", 
+            "message": f"Daily lock active for {symbol}. Only one trade per stock is allowed daily."
+        }
+        
     from backend.engines.stock_analyzer import stock_analyzer
     res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
     if res.get("status") == "error":
@@ -627,15 +676,24 @@ async def execute_stock_trade(symbol: str, side: str, background_tasks: Backgrou
     trading_symbol = res["trading_symbol"]
     price = res["ltp"]
     
-    settings = db_manager.get_settings() or {}
-    capital_limit = float(settings.get("capital_limit", 10000))
-    
     if price <= 0:
         return {"status": "error", "message": "Invalid stock price"}
         
-    qty = int(capital_limit / price)
+    settings = db_manager.get_settings() or {}
+    capital_limit = float(settings.get("capital_limit", 10000))
+    
+    # Calculate maximum allowed quantity under the set capital limit
+    max_allowed_qty = int(capital_limit / price)
+    if max_allowed_qty <= 0:
+        max_allowed_qty = 1
+        
     if qty <= 0:
         qty = 1
+    elif qty > max_allowed_qty:
+        return {
+            "status": "error", 
+            "message": f"Requested quantity ({qty}) exceeds daily capital limit. Max allowed is {max_allowed_qty} shares."
+        }
         
     signal_data = {
         "signal": side,

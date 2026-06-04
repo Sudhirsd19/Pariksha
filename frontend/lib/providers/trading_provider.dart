@@ -344,6 +344,11 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
+  void clearScannedStock() {
+    _scannedStockData = null;
+    notifyListeners();
+  }
+
   Future<List<Map<String, dynamic>>> searchStocks(String query) async {
     if (query.isEmpty) return [];
     try {
@@ -362,9 +367,9 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
-  Future<bool> executeStockTrade(String symbol, String side) async {
+  Future<bool> executeStockTrade(String symbol, String side, int qty) async {
     try {
-      final res = await _apiService.executeStockTrade(symbol, side);
+      final res = await _apiService.executeStockTrade(symbol, side, qty);
       if (res != null && res['status'] == 'success') {
         scaffoldMessengerKey.currentState?.showSnackBar(
           SnackBar(

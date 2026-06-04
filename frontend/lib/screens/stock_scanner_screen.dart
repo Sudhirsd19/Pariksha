@@ -253,8 +253,11 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     // Scanner State / Results
                     if (isScanning)
                       _buildLoadingIndicator()
-                    else if (data == null)
-                      _buildEmptyState()
+                    else if (data == null) ...[
+                      _SmartScreenerCard(
+                        onExecuteTrade: (symbol, side, ltp) => _executeTrade(context, provider, symbol, side, ltp),
+                      ),
+                    ]
                     else if (data['status'] == 'error')
                       _buildErrorState(data['message'] ?? "Unknown error occurred.")
                     else
@@ -450,6 +453,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                               onPressed: () {
                                 _searchController.clear();
                                 _removeDropdown();
+                                Provider.of<TradingProvider>(context, listen: false).clearScannedStock();
                               },
                             )
                           : null,
@@ -552,38 +556,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
-    return Container(
-      height: 250,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.01),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.02)),
-      ),
-      child: const Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.radar_rounded, size: 48, color: Colors.white10),
-          SizedBox(height: 16),
-          Text(
-            "AWAITING TARGET RESOLUTION",
-            style: TextStyle(
-              color: Colors.white30,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 2,
-            ),
-          ),
-          SizedBox(height: 6),
-          Text(
-            "Search or select a ticker above to run algorithms.",
-            style: TextStyle(color: Colors.white10, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildErrorState(String message) {
     return Container(
@@ -902,13 +874,53 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               ),
             );
           }
+
+          // Daily lock check: prevent trading the same stock if it was already traded today
+          final closedTrades = provider.signals.where(
+            (sig) {
+              final String sigSym = sig['symbol'] ?? '';
+              final isMatch = sigSym == "$symbol-EQ" || sigSym == symbol;
+              final isClosed = sig['status'] == "CLOSED";
+              return isMatch && isClosed;
+            }
+          ).toList();
+          final bool isLockedToday = closedTrades.isNotEmpty;
+          if (isLockedToday) {
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3), width: 1.5),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.lock_outline_rounded, color: Colors.redAccent, size: 18),
+                  SizedBox(width: 10),
+                  Text(
+                    "LOCKED: STOCK TRADED TODAY",
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
           return Row(
             children: [
               Expanded(
                 child: _buildActionButton(
                   label: "EXECUTE ALGO BUY",
                   color: Colors.greenAccent,
-                  onPressed: () => _executeTrade(context, provider, symbol, "BUY"),
+                  onPressed: () => _executeTrade(context, provider, symbol, "BUY", (data['ltp'] as num?)?.toDouble() ?? 0.0),
                 ),
               ),
               const SizedBox(width: 14),
@@ -916,7 +928,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                 child: _buildActionButton(
                   label: "EXECUTE ALGO SELL",
                   color: Colors.redAccent,
-                  onPressed: () => _executeTrade(context, provider, symbol, "SELL"),
+                  onPressed: () => _executeTrade(context, provider, symbol, "SELL", (data['ltp'] as num?)?.toDouble() ?? 0.0),
                 ),
               ),
             ],
@@ -959,49 +971,164 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     );
   }
 
-  void _executeTrade(BuildContext context, TradingProvider provider, String symbol, String side) {
+  void _executeTrade(BuildContext context, TradingProvider provider, String symbol, String side, double ltp) {
+    if (ltp <= 0) ltp = 100.0; // Fallback safe price if unavailable
+    final double capitalLimit = (provider.systemSettings['capital_limit'] as num?)?.toDouble() ?? 10000.0;
+    int maxQty = (capitalLimit / ltp).floor();
+    if (maxQty <= 0) maxQty = 1;
+
+    int selectedQty = 1;
+    final TextEditingController qtyController = TextEditingController(text: "1");
+
     showDialog(
       context: context,
       builder: (ctx) {
-        return BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-          child: AlertDialog(
-            backgroundColor: const Color(0xFF0F0F1A),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-              side: const BorderSide(color: Colors.white10),
-            ),
-            title: Text(
-              "CONFIRM ALGO EXECUTION",
-              style: TextStyle(
-                color: side == "BUY" ? Colors.greenAccent : Colors.redAccent,
-                fontWeight: FontWeight.w900,
-                fontSize: 14,
-                letterSpacing: 2,
-              ),
-            ),
-            content: Text(
-              "Are you sure you want to trigger a dynamic $side algo trade for $symbol in the NSE Cash Segment?",
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text("CANCEL", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: side == "BUY" ? Colors.green : Colors.red,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final double totalValue = selectedQty * ltp;
+            final bool isValid = selectedQty > 0 && selectedQty <= maxQty;
+
+            return BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+              child: AlertDialog(
+                backgroundColor: const Color(0xFF0F0F1A),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  side: const BorderSide(color: Colors.white10),
                 ),
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  await provider.executeStockTrade(symbol, side);
-                },
-                child: const Text("EXECUTE", style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+                title: Text(
+                  "CONFIRM ALGO EXECUTION",
+                  style: TextStyle(
+                    color: side == "BUY" ? Colors.greenAccent : Colors.redAccent,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    letterSpacing: 2,
+                  ),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Are you sure you want to trigger a dynamic $side algo trade for $symbol in the NSE Cash Segment?",
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Price per Share:", style: TextStyle(color: Colors.white30, fontSize: 12)),
+                        Text("₹${ltp.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Capital Limit:", style: TextStyle(color: Colors.white30, fontSize: 12)),
+                        Text("₹${capitalLimit.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text("Quantity (Shares):", style: TextStyle(color: Colors.white30, fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: selectedQty > 1
+                              ? () {
+                                  setState(() {
+                                    selectedQty--;
+                                    qtyController.text = selectedQty.toString();
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.remove_circle_outline, color: Colors.white60),
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: qtyController,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            decoration: InputDecoration(
+                              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: const BorderSide(color: Colors.white12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: BorderSide(color: side == "BUY" ? Colors.greenAccent : Colors.redAccent),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onChanged: (val) {
+                              final parsed = int.tryParse(val) ?? 0;
+                              setState(() {
+                                selectedQty = parsed;
+                              });
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: selectedQty < maxQty
+                              ? () {
+                                  setState(() {
+                                    selectedQty++;
+                                    qtyController.text = selectedQty.toString();
+                                  });
+                                }
+                              : null,
+                          icon: const Icon(Icons.add_circle_outline, color: Colors.white60),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Estimated Value:", style: TextStyle(color: Colors.white30, fontSize: 12)),
+                        Text(
+                          "₹${totalValue.toStringAsFixed(2)}",
+                          style: TextStyle(
+                            color: isValid ? Colors.greenAccent : Colors.redAccent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (selectedQty > maxQty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        "Exceeds Capital Limit! Max allowed is $maxQty shares.",
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text("CANCEL", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold)),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: side == "BUY" ? Colors.green : Colors.red,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: isValid
+                        ? () async {
+                            Navigator.pop(ctx);
+                            await provider.executeStockTrade(symbol, side, selectedQty);
+                          }
+                        : null,
+                    child: const Text("EXECUTE", style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -1211,14 +1338,14 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                       context,
                       label: "BUY",
                       color: Colors.greenAccent,
-                      onPressed: () => _executeTrade(context, provider, symbol, "BUY"),
+                      onPressed: () => _executeTrade(context, provider, symbol, "BUY", ltp),
                     )
                   else if (rec == "SELL")
                     _buildQuickExecutionButton(
                       context,
                       label: "SELL",
                       color: Colors.redAccent,
-                      onPressed: () => _executeTrade(context, provider, symbol, "SELL"),
+                      onPressed: () => _executeTrade(context, provider, symbol, "SELL", ltp),
                     )
                   else
                     Container(
@@ -1270,6 +1397,483 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
             letterSpacing: 1,
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// SMART SCREENER CARD (separate StatefulWidget)
+// ─────────────────────────────────────────────
+class _SmartScreenerCard extends StatefulWidget {
+  final void Function(String symbol, String side, double ltp) onExecuteTrade;
+  const _SmartScreenerCard({required this.onExecuteTrade});
+
+  @override
+  State<_SmartScreenerCard> createState() => _SmartScreenerCardState();
+}
+
+class _SmartScreenerCardState extends State<_SmartScreenerCard> {
+  double _selectedPrice = 500;
+  bool _isScanning = false;
+  List<Map<String, dynamic>> _results = [];
+  int _scanned = 0;
+  bool _hasScanned = false;
+  String? _error;
+
+  final List<double> _priceLimits = [200, 500, 1000, 1500, 3000];
+
+  Future<void> _runScan() async {
+    setState(() {
+      _isScanning = true;
+      _error = null;
+      _results = [];
+      _hasScanned = false;
+    });
+    try {
+      final provider = Provider.of<TradingProvider>(context, listen: false);
+      final res = await provider.smartScreener(_selectedPrice);
+      if (res != null && res['status'] == 'success') {
+        setState(() {
+          _results = List<Map<String, dynamic>>.from(
+            (res['results'] as List).map((e) => Map<String, dynamic>.from(e)),
+          );
+          _scanned = res['scanned'] ?? 0;
+          _hasScanned = true;
+        });
+      } else {
+        setState(() => _error = "Scan failed. Try again.");
+      }
+    } catch (e) {
+      setState(() => _error = "Error: $e");
+    } finally {
+      setState(() => _isScanning = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = Provider.of<TradingProvider>(context);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0A0A18),
+            Colors.deepPurple.withValues(alpha: 0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: 0.2), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.deepPurpleAccent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent, size: 18),
+              ),
+              const SizedBox(width: 12),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "SMART SCREENER",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  Text(
+                    "100% score stocks within budget",
+                    style: TextStyle(color: Colors.white38, fontSize: 10),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // Price Filter Label
+          const Text(
+            "PRICE LIMIT",
+            style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2),
+          ),
+          const SizedBox(height: 10),
+
+          // Price Filter Chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _priceLimits.map((price) {
+              final selected = _selectedPrice == price;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedPrice = price),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Colors.deepPurpleAccent.withValues(alpha: 0.25)
+                        : Colors.white.withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: selected
+                          ? Colors.deepPurpleAccent.withValues(alpha: 0.6)
+                          : Colors.white.withValues(alpha: 0.07),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    "< ₹${price.toInt()}",
+                    style: TextStyle(
+                      color: selected ? Colors.deepPurpleAccent : Colors.white54,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 18),
+
+          // SCAN Button
+          GestureDetector(
+            onTap: _isScanning ? null : _runScan,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                gradient: _isScanning
+                    ? null
+                    : LinearGradient(
+                        colors: [
+                          Colors.deepPurpleAccent.withValues(alpha: 0.6),
+                          Colors.purpleAccent.withValues(alpha: 0.4),
+                        ],
+                      ),
+                color: _isScanning ? Colors.white10 : null,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _isScanning ? Colors.white10 : Colors.deepPurpleAccent.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_isScanning)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white38,
+                      ),
+                    )
+                  else
+                    const Icon(Icons.radar_rounded, color: Colors.deepPurpleAccent, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isScanning ? "SCANNING... (takes ~30-60s)" : "SCAN NOW",
+                    style: TextStyle(
+                      color: _isScanning ? Colors.white30 : Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Results Section
+          if (_error != null) ...[
+            const SizedBox(height: 16),
+            Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+          ],
+
+          if (_hasScanned) ...[
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  "$_scanned stocks scanned   •   ${_results.length} picks found",
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_results.isEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                alignment: Alignment.center,
+                child: Column(
+                  children: [
+                    const Icon(Icons.search_off_rounded, color: Colors.white24, size: 32),
+                    const SizedBox(height: 8),
+                    Text(
+                      "No 100% score stocks under ₹${_selectedPrice.toInt()}",
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                    const Text(
+                      "Try a higher price limit",
+                      style: TextStyle(color: Colors.white24, fontSize: 10),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Column(
+                children: _results.map((stock) {
+                  final String symbol = stock['symbol'] ?? '';
+                  final double ltp = (stock['ltp'] as num?)?.toDouble() ?? 0;
+                  final int score = (stock['score'] as num?)?.toInt() ?? 0;
+                  final String trend = stock['htf_trend'] ?? '';
+                  final String zone = stock['value_zone'] ?? '';
+
+                  // Find if this stock has an active trade open today
+                  final now = DateTime.now();
+                  final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+                  final activeTrade = provider.signals.firstWhere(
+                    (sig) {
+                      final int ts = sig['timestamp'] is num 
+                          ? (sig['timestamp'] as num).toInt() 
+                          : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+                      return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
+                             sig['status'] != "CLOSED" && 
+                             ts >= todayStart;
+                    },
+                    orElse: () => null,
+                  );
+                  final bool hasActive = activeTrade != null;
+                  final String? tradeSide = hasActive ? activeTrade['signal'] : null;
+
+                  // Daily lock check: prevent trading the same stock if it was already traded today
+                  final closedTrades = provider.signals.where(
+                    (sig) {
+                      final String sigSym = sig['symbol'] ?? '';
+                      final isMatch = sigSym == "$symbol-EQ" || sigSym == symbol;
+                      final isClosed = sig['status'] == "CLOSED";
+                      return isMatch && isClosed;
+                    }
+                  ).toList();
+                  final bool isLockedToday = closedTrades.isNotEmpty;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.15), width: 1),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: Colors.greenAccent.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.stars_rounded, color: Colors.greenAccent, size: 18),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    symbol,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  Text(
+                                    "$trend  •  $zone",
+                                    style: const TextStyle(color: Colors.white38, fontSize: 10),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  "₹${ltp.toStringAsFixed(2)}",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.greenAccent.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    "$score%",
+                                    style: const TextStyle(
+                                      color: Colors.greenAccent,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        // Quick Action Buttons
+                        if (hasActive)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: (tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: (tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent).withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.lock_clock_outlined,
+                                  color: tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent,
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  "ALGO $tradeSide ACTIVE FOR $symbol",
+                                  style: TextStyle(
+                                    color: tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 10,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else if (isLockedToday)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Colors.redAccent.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.lock_outline_rounded,
+                                  color: Colors.redAccent,
+                                  size: 14,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  "LOCKED TODAY",
+                                  style: TextStyle(
+                                    color: Colors.redAccent,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 10,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => widget.onExecuteTrade(symbol, "BUY", ltp),
+                                  child: Container(
+                                    height: 38,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: Colors.greenAccent.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.3)),
+                                    ),
+                                    child: const Text(
+                                      "BUY",
+                                      style: TextStyle(
+                                        color: Colors.greenAccent,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 11,
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => widget.onExecuteTrade(symbol, "SELL", ltp),
+                                  child: Container(
+                                    height: 38,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: Colors.redAccent.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                                    ),
+                                    child: const Text(
+                                      "SELL",
+                                      style: TextStyle(
+                                        color: Colors.redAccent,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 11,
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+          ],
+        ],
       ),
     );
   }
