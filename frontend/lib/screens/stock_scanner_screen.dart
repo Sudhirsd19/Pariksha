@@ -20,21 +20,13 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   ];
 
   // Price filter limit
+  // Price filter limit
   double? _selectedPriceLimit;
 
-  // Typical prices mapping for suggestions
-  final Map<String, double> _refPrices = {
-    "RELIANCE": 2900.0,
-    "TCS": 3800.0,
-    "INFY": 1500.0,
-    "HDFCBANK": 1500.0,
-    "ICICIBANK": 1100.0,
-    "TATASTEEL": 160.0,
-    "SBIN": 800.0,
-    "BHARTIARTL": 1400.0,
-    "WIPRO": 460.0,
-    "ADANIPORTS": 1300.0,
-  };
+  // Score filter limit
+  int? _selectedScoreLimit;
+
+
 
   @override
   void dispose() {
@@ -210,6 +202,52 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     );
   }
 
+  Widget _buildScoreFilters() {
+    final filters = [
+      {"label": "ALL SCORE", "val": null},
+      {"label": ">= 50%", "val": 50},
+      {"label": ">= 60%", "val": 60},
+      {"label": ">= 70%", "val": 70},
+      {"label": ">= 80%", "val": 80},
+      {"label": ">= 90%", "val": 90},
+      {"label": "100%", "val": 100},
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: filters.map((f) {
+        final isSelected = _selectedScoreLimit == f["val"];
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              _selectedScoreLimit = f["val"] as int?;
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected ? Colors.cyanAccent.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.02),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isSelected ? Colors.cyanAccent.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.05),
+                width: 1,
+              ),
+            ),
+            child: Text(
+              f["label"] as String,
+              style: TextStyle(
+                color: isSelected ? Colors.cyanAccent : Colors.white60,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   Widget _buildSearchCard(bool isScanning) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -280,6 +318,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
           ),
           const SizedBox(height: 16),
           _buildPriceFilters(),
+          const SizedBox(height: 12),
+          _buildScoreFilters(),
           const SizedBox(height: 16),
           Wrap(
             spacing: 8,
@@ -414,6 +454,22 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     final String symbol = data['symbol'] ?? "";
     final double ltp = (data['ltp'] as num?)?.toDouble() ?? 0.0;
     final checklist = data['checklist'] as List<dynamic>? ?? [];
+
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final activeTrade = provider.signals.firstWhere(
+      (sig) {
+        final int ts = sig['timestamp'] is int 
+            ? sig['timestamp'] 
+            : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+        return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
+               sig['status'] != "CLOSED" && 
+               ts >= todayStart;
+      },
+      orElse: () => null,
+    );
+    final bool hasActive = activeTrade != null;
+    final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
     Color scoreColor = Colors.redAccent;
     if (score >= 70) {
@@ -647,25 +703,56 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
         const SizedBox(height: 24),
 
         // Execution Row
-        Row(
-          children: [
-            Expanded(
-              child: _buildActionButton(
-                label: "EXECUTE ALGO BUY",
-                color: Colors.greenAccent,
-                onPressed: () => _executeTrade(context, provider, symbol, "BUY"),
+        (() {
+          if (hasActive) {
+            final Color activeColor = tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent;
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: activeColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: activeColor.withValues(alpha: 0.3), width: 1.5),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: _buildActionButton(
-                label: "EXECUTE ALGO SELL",
-                color: Colors.redAccent,
-                onPressed: () => _executeTrade(context, provider, symbol, "SELL"),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.lock_clock_outlined, color: activeColor, size: 18),
+                  const SizedBox(width: 10),
+                  Text(
+                    "ALGO $tradeSide ACTIVE FOR $symbol",
+                    style: TextStyle(
+                      color: activeColor,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
+            );
+          }
+          return Row(
+            children: [
+              Expanded(
+                child: _buildActionButton(
+                  label: "EXECUTE ALGO BUY",
+                  color: Colors.greenAccent,
+                  onPressed: () => _executeTrade(context, provider, symbol, "BUY"),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: _buildActionButton(
+                  label: "EXECUTE ALGO SELL",
+                  color: Colors.redAccent,
+                  onPressed: () => _executeTrade(context, provider, symbol, "SELL"),
+                ),
+              ),
+            ],
+          );
+        })(),
       ],
     );
   }
@@ -754,9 +841,15 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   Widget _buildWatchlistPanel(BuildContext context, TradingProvider provider) {
     final bool isRefreshing = provider.isRefreshingWatchlist;
     final filteredWatchlist = provider.watchlist.where((item) {
-      if (_selectedPriceLimit == null) return true;
-      final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
-      return ltp <= _selectedPriceLimit!;
+      if (_selectedPriceLimit != null) {
+        final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
+        if (ltp > _selectedPriceLimit!) return false;
+      }
+      if (_selectedScoreLimit != null) {
+        final int score = item['score'] ?? 0;
+        if (score < _selectedScoreLimit!) return false;
+      }
+      return true;
     }).toList();
 
     return Column(
@@ -828,8 +921,17 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final String rec = item['recommendation'] ?? "NEUTRAL";
 
               // Find if this stock has an active trade open
+              final now = DateTime.now();
+              final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
               final activeTrade = provider.signals.firstWhere(
-                (sig) => (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && sig['status'] != "CLOSED",
+                (sig) {
+                  final int ts = sig['timestamp'] is int 
+                      ? sig['timestamp'] 
+                      : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                  return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
+                         sig['status'] != "CLOSED" && 
+                         ts >= todayStart;
+                },
                 orElse: () => null,
               );
               final bool hasActive = activeTrade != null;
@@ -908,7 +1010,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                               Text(
                                 "₹${ltp.toStringAsFixed(2)} | Score: $score%",
                                 style: const TextStyle(
-                                  color: Colors.white30,
+                                  color: Colors.white60,
                                   fontSize: 11,
                                 ),
                               ),
@@ -918,7 +1020,24 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     ),
                   ),
                   const Spacer(),
-                  if (rec == "BUY")
+                  if (hasActive)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: (tradeSide == "BUY" ? Colors.green : Colors.red).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: (tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent).withValues(alpha: 0.2)),
+                      ),
+                      child: Text(
+                        "ACTIVE",
+                        style: TextStyle(
+                          color: tradeSide == "BUY" ? Colors.greenAccent : Colors.redAccent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    )
+                  else if (rec == "BUY")
                     _buildQuickExecutionButton(
                       context,
                       label: "BUY",
@@ -941,7 +1060,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                       ),
                       child: const Text(
                         "NEUTRAL",
-                        style: TextStyle(color: Colors.white30, fontSize: 10, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
                       ),
                     ),
                   const SizedBox(width: 12),

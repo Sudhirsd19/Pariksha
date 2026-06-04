@@ -3,12 +3,62 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/trading_provider.dart';
 
-class LogsScreen extends StatelessWidget {
+class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});
+
+  @override
+  State<LogsScreen> createState() => _LogsScreenState();
+}
+
+class _LogsScreenState extends State<LogsScreen> {
+  DateTime? _selectedDate;
+
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2025),
+      lastDate: DateTime(2030),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.cyanAccent,
+              onPrimary: Colors.black,
+              surface: Color(0xFF0F0F1A),
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF0F0F1A),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TradingProvider>(context);
+
+    // Filter logs by selected date if set
+    final filteredLogs = provider.signals.where((log) {
+      if (_selectedDate == null) return true;
+      final timestamp = log['timestamp'];
+      if (timestamp == null) return false;
+      final dt = DateTime.fromMillisecondsSinceEpoch(
+        timestamp is int ? timestamp : int.tryParse(timestamp.toString()) ?? 0
+      );
+      return dt.year == _selectedDate!.year &&
+             dt.month == _selectedDate!.month &&
+             dt.day == _selectedDate!.day;
+    }).toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFF040408),
@@ -36,15 +86,66 @@ class LogsScreen extends StatelessWidget {
                 ),
                 actions: [
                   IconButton(
+                    icon: Icon(
+                      Icons.calendar_today_rounded, 
+                      color: _selectedDate != null ? Colors.cyanAccent : Colors.white60,
+                    ),
+                    onPressed: () => _selectDate(context),
+                  ),
+                  if (_selectedDate != null)
+                    IconButton(
+                      icon: const Icon(Icons.clear_rounded, color: Colors.redAccent),
+                      tooltip: "Clear Filter",
+                      onPressed: () {
+                        setState(() {
+                          _selectedDate = null;
+                        });
+                      },
+                    ),
+                  IconButton(
                     icon: const Icon(Icons.sync_rounded, color: Colors.cyanAccent),
                     onPressed: () => provider.fetchLogs(),
                   ),
                 ],
               ),
 
+              if (_selectedDate != null)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.cyanAccent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.date_range_rounded, color: Colors.cyanAccent, size: 14),
+                              const SizedBox(width: 8),
+                              Text(
+                                "Date: ${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}",
+                                style: const TextStyle(
+                                  color: Colors.cyanAccent,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-                sliver: provider.signals.isEmpty
+                sliver: filteredLogs.isEmpty
                     ? const SliverFillRemaining(
                         child: Center(
                           child: Text(
@@ -56,10 +157,10 @@ class LogsScreen extends StatelessWidget {
                     : SliverList(
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
-                            final log = provider.signals[index];
+                            final log = filteredLogs[index];
                             return _buildCyberLogTile(log);
                           },
-                          childCount: provider.signals.length,
+                          childCount: filteredLogs.length,
                         ),
                       ),
               ),
@@ -69,6 +170,7 @@ class LogsScreen extends StatelessWidget {
       ),
     );
   }
+
 
   Widget _buildMeshBackground() {
     return Stack(
@@ -138,7 +240,7 @@ class LogsScreen extends StatelessWidget {
                             log['timestamp'] != null 
                               ? "${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).hour.toString().padLeft(2,'0')}:${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).minute.toString().padLeft(2,'0')}"
                               : 'NOW',
-                            style: const TextStyle(color: Colors.white12, fontSize: 9, fontWeight: FontWeight.bold),
+                            style: const TextStyle(color: Colors.white60, fontSize: 9, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
@@ -167,7 +269,7 @@ class LogsScreen extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 (log['reason'] ?? 'AI PROTOCOL EXECUTION').toString(),
-                                style: const TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.w500, height: 1.4),
+                                style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w500, height: 1.4),
                               ),
                             ),
                           ],

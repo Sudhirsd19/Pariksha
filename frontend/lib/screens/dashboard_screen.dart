@@ -25,7 +25,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (mounted) {
-        Provider.of<TradingProvider>(context, listen: false).fetchStatus();
+        final provider = Provider.of<TradingProvider>(context, listen: false);
+        provider.fetchStatus();
+        provider.fetchLogs();
+        provider.fetchAnalyticsAndPnl();
       }
     });
   }
@@ -111,28 +114,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       _buildHolographicPnL(tradingProvider),
                       const SizedBox(height: 24),
 
-                      // 4. Double Mini Stats
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildCyberStat(
-                              'VOLATILITY', 
-                              '${tradingProvider.tradesToday} TRADES', 
-                              Icons.auto_graph_rounded, 
-                              Colors.purpleAccent
+                      // 4. Dynamic Dashboard Stats Grid
+                      (() {
+                        final now = DateTime.now();
+                        final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+                        final todayTrades = tradingProvider.signals.where((sig) {
+                          final int ts = sig['timestamp'] is int 
+                              ? sig['timestamp'] 
+                              : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                          return ts >= todayStart;
+                        }).toList();
+
+                        final closedTodayTrades = todayTrades.where((sig) => sig['status'] == 'CLOSED').toList();
+                        final int totalTradesCount = closedTodayTrades.length;
+
+                        int profitTradesCount = 0;
+                        int lossTradesCount = 0;
+                        double totalProfitAmount = 0.0;
+                        double totalLossAmount = 0.0;
+
+                        for (final sig in closedTodayTrades) {
+                          final double pnl = (sig['pnl'] as num?)?.toDouble() ?? 0.0;
+                          if (pnl > 0) {
+                            profitTradesCount++;
+                            totalProfitAmount += pnl;
+                          } else {
+                            lossTradesCount++;
+                            totalLossAmount += pnl.abs();
+                          }
+                        }
+
+                        final double accuracy = closedTodayTrades.isEmpty 
+                            ? 0.0 
+                            : (profitTradesCount / closedTodayTrades.length) * 100;
+
+                        return Column(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'TOTAL TRADES', 
+                                    '$totalTradesCount', 
+                                    Icons.auto_graph_rounded, 
+                                    Colors.purpleAccent
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'ACCURACY', 
+                                    '${accuracy.toStringAsFixed(1)}%', 
+                                    Icons.radar_rounded, 
+                                    Colors.cyanAccent
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildCyberStat(
-                              'ACCURACY', 
-                              '${tradingProvider.winRate.toStringAsFixed(1)}%', 
-                              Icons.radar_rounded, 
-                              Colors.cyanAccent
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'PROFIT COUNT', 
+                                    '$profitTradesCount', 
+                                    Icons.check_circle_outline_rounded, 
+                                    Colors.greenAccent
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'LOSS COUNT', 
+                                    '$lossTradesCount', 
+                                    Icons.cancel_outlined, 
+                                    Colors.redAccent
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
-                      ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'TOTAL PROFIT', 
+                                    '₹${totalProfitAmount.toStringAsFixed(2)}', 
+                                    Icons.arrow_upward_rounded, 
+                                    Colors.greenAccent
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: _buildCyberStat(
+                                    'TOTAL LOSS', 
+                                    '₹${totalLossAmount.toStringAsFixed(2)}', 
+                                    Icons.arrow_downward_rounded, 
+                                    Colors.redAccent
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      })(),
                       const SizedBox(height: 30),
 
                       // 5. Live Market Oracle
@@ -147,7 +232,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           Text(
                             'LIVE SIGNAL FEED',
                             style: TextStyle(
-                              color: Colors.white24,
+                              color: Colors.white54,
                               fontWeight: FontWeight.w900,
                               fontSize: 11,
                               letterSpacing: 3,
@@ -158,14 +243,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       const SizedBox(height: 16),
 
                       // 7. Futuristic Signal List
-                      tradingProvider.signals.isEmpty
-                          ? _buildEmptySignals()
-                          : Column(
-                              children: tradingProvider.signals
-                                  .take(6)
-                                  .map((sig) => _buildCyberSignalTile(sig))
-                                  .toList(),
-                            ),
+                      (() {
+                        final now = DateTime.now();
+                        final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+                        final activeToday = tradingProvider.signals.where((sig) {
+                          final int ts = sig['timestamp'] is int 
+                              ? sig['timestamp'] 
+                              : int.tryParse(sig['timestamp']?.toString() ?? '') ?? 0;
+                          return sig['status'] != 'CLOSED' && ts >= todayStart;
+                        }).toList();
+
+                        if (activeToday.isEmpty) {
+                          return _buildEmptySignals();
+                        }
+
+                        return Column(
+                          children: activeToday
+                              .take(6)
+                              .map((sig) => _buildCyberSignalTile(sig))
+                              .toList(),
+                        );
+                      })(),
                       const SizedBox(height: 250),
                     ],
                   ),
@@ -368,7 +466,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+            style: const TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
           ),
         ],
       ),
@@ -494,8 +592,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'ENTRY @ ₹${sig['entry'] ?? '0.0'} • $timeStr',
-                  style: const TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.bold),
+                  '${sig['qty'] ?? '0'} QTY • ENTRY @ ₹${sig['entry'] ?? '0.0'} • $timeStr',
+                  style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -644,7 +742,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         const Text(
           'SIGNAL SCORE',
-          style: TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1),
+          style: TextStyle(color: Colors.white54, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1),
         ),
         const SizedBox(height: 4),
         Text(

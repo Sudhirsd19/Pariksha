@@ -115,8 +115,27 @@ async def startup_event():
                 risk_manager.trades_today = int(data.get("total_trades", 0))
                 persistence_manager.log_event("INFO", "DAILY_RESTORE", f"Restored: trades={risk_manager.trades_today}, loss=Rs.{risk_manager.daily_loss:.2f}")
                 print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=Rs.{risk_manager.daily_loss:.2f}")
+            
+            # Restore today's signals to populate in-memory list
+            from datetime import timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            start_of_day_ist = datetime.now(ist_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+            start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
+            
+            trades_query = db.collection("quantum_trades").where("timestamp", ">=", start_of_day_ms).order_by("timestamp").stream()
+            
+            global signals
+            restored_count = 0
+            for doc_snapshot in trades_query:
+                trade_data = doc_snapshot.to_dict()
+                trade_data['id'] = doc_snapshot.id
+                if not any(s.get('id') == doc_snapshot.id for s in signals):
+                    signals.append(trade_data)
+                    restored_count += 1
+            print(f"[Startup] Restored {restored_count} signals from Firestore.")
+            persistence_manager.log_event("INFO", "SIGNALS_RESTORE", f"Restored {restored_count} signals from Firestore.")
     except Exception as e:
-        print(f"[Startup] Could not restore daily stats: {e}")
+        print(f"[Startup] Could not restore daily stats or signals: {e}")
     
     asyncio.create_task(ltp_broadcaster())
 
@@ -188,7 +207,7 @@ async def ltp_broadcaster():
             # 2. Monitor open trades
             closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
             for trade in (closed_trades or []):
-                send_push_notification(f"🏁 TRADE CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
+                send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
 
             # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
             if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
@@ -280,6 +299,10 @@ async def toggle_trading(active: bool):
     if trading_active:
         if trading_loop_task is None or trading_loop_task.done():
             trading_loop_task = asyncio.create_task(trading_loop())
+            
+    # Sync new status directly to Firestore immediately
+    await asyncio.to_thread(sync_status_to_db)
+    
     persistence_manager.log_event("INFO", "ENGINE_TOGGLED", f"Active: {active}")
     return {"status": "success", "trading_active": trading_active}
 
@@ -510,6 +533,8 @@ async def execute_stock_trade(symbol: str, side: str, background_tasks: Backgrou
         signal_data["order_id"] = order_id
         
     signals.append(signal_data)
+    if ws_manager:
+        ws_manager.subscribe_token(token, 1) # 1 = NSE Equity Cash
     
     background_tasks.add_task(
         background_save_and_notify,
@@ -750,6 +775,9 @@ async def trading_loop():
         except Exception as e:
             print(f"[Trading Loop Error]: {e}")
             await asyncio.sleep(5)
+
+    # Sync status to Firestore when the loop exits
+    await asyncio.to_thread(sync_status_to_db)
 
         # ---------------------------------------------------------------------------
 

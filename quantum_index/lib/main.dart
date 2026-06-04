@@ -128,6 +128,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (key == 'use_time_restrictions') useTimeRestrictions = value;
           if (key == 'instrument_type') instrumentType = value;
         });
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Setting updated: $key = $value')),
         );
@@ -189,7 +190,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Switch(
                   value: isTradingActive,
-                  activeColor: Colors.greenAccent,
+                  activeThumbColor: Colors.greenAccent,
                   onChanged: (val) => _toggleTrading(val),
                 ),
               ],
@@ -234,7 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: const Text('Time Restrictions (9:15-9:30 & 1:00-1:30)'),
             subtitle: const Text('Block trades during volatile/lull periods'),
             value: useTimeRestrictions,
-            activeColor: Colors.blueAccent,
+            activeThumbColor: Colors.blueAccent,
             onChanged: (val) => _updateSettings('use_time_restrictions', val),
           ),
           const Divider(height: 1),

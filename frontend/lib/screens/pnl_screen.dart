@@ -231,7 +231,7 @@ class _PnLScreenState extends State<PnLScreen> with SingleTickerProviderStateMix
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white24, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
         const SizedBox(height: 4),
         Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 14)),
       ],
@@ -322,7 +322,7 @@ class _PnLScreenState extends State<PnLScreen> with SingleTickerProviderStateMix
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white24, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
           const SizedBox(height: 6),
           Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18)),
         ],
@@ -349,7 +349,7 @@ class _PnLScreenState extends State<PnLScreen> with SingleTickerProviderStateMix
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text((record['date'] ?? '').toString(), style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w900, fontSize: 14)),
-              Text('${record['total_trades'] ?? 0} SESSIONS', style: const TextStyle(color: Colors.white10, fontSize: 10, fontWeight: FontWeight.bold)),
+              Text('${record['total_trades'] ?? 0} SESSIONS', style: const TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           Text(
