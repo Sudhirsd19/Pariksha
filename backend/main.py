@@ -473,6 +473,19 @@ async def square_off():
     await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "success", "message": f"Square Off: {count} trades closed."}
 
+@app.get("/search-stocks")
+async def search_stocks(q: str = ""):
+    query = q.upper().strip()
+    if not query:
+        return []
+    results = []
+    for name, info in token_manager.stocks_index.items():
+        if query in name or query in info.get("symbol", "").upper():
+            results.append(info)
+    # Sort results: exact prefix matches first, then by name length
+    results.sort(key=lambda x: (not x["name"].startswith(query), len(x["name"])))
+    return results[:30]
+
 @app.get("/analyze-stock")
 async def analyze_stock(symbol: str):
     symbol = symbol.upper()

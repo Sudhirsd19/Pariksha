@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -14,22 +15,179 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
-  // Top Indian liquid stock recommendations
+  // Top Indian liquid stock quick-tap suggestions
   final List<String> _suggestions = [
     "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "TATASTEEL", "SBIN", "BHARTIARTL", "WIPRO", "ADANIPORTS"
   ];
 
-  // Price filter limit
+  // Overlay-based search dropdown
+  OverlayEntry? _dropdownOverlay;
+  final LayerLink _layerLink = LayerLink();
+  List<Map<String, dynamic>> _searchResults = [];
+  Timer? _debounce;
+
   // Price filter limit
   double? _selectedPriceLimit;
 
   // Score filter limit
   int? _selectedScoreLimit;
 
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+    _searchFocusNode.addListener(() {
+      if (!_searchFocusNode.hasFocus) {
+        _removeDropdown();
+      }
+    });
+  }
 
+  void _onSearchChanged() {
+    final query = _searchController.text.trim();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    if (query.isEmpty) {
+      _removeDropdown();
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 300), () async {
+      final provider = Provider.of<TradingProvider>(context, listen: false);
+      final results = await provider.searchStocks(query);
+      if (!mounted) return;
+      _searchResults = results;
+      if (results.isNotEmpty && _searchFocusNode.hasFocus) {
+        _showDropdownOverlay();
+      } else {
+        _removeDropdown();
+      }
+    });
+  }
+
+  void _showDropdownOverlay() {
+    _removeDropdown();
+    _dropdownOverlay = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          width: MediaQuery.of(context).size.width - 40 - 12 - 52, // screen - horizontal padding - gap - button
+          child: CompositedTransformFollower(
+            link: _layerLink,
+            showWhenUnlinked: false,
+            offset: const Offset(0, 56),
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 280),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0E0E1C),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.25), width: 1),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.6),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                    BoxShadow(
+                      color: Colors.cyanAccent.withValues(alpha: 0.08),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: _searchResults.length,
+                    itemBuilder: (ctx, index) {
+                      final item = _searchResults[index];
+                      final String name = item['name'] ?? '';
+                      final String symbol = item['symbol'] ?? '';
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _selectStock(name),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                          decoration: BoxDecoration(
+                            border: index < _searchResults.length - 1
+                                ? Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.05)))
+                                : null,
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.cyanAccent,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      name,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    Text(
+                                      symbol,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.35),
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                Icons.north_west_rounded,
+                                color: Colors.white.withValues(alpha: 0.2),
+                                size: 14,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    Overlay.of(context).insert(_dropdownOverlay!);
+  }
+
+  void _removeDropdown() {
+    _dropdownOverlay?.remove();
+    _dropdownOverlay = null;
+  }
+
+  void _selectStock(String symbol) {
+    _removeDropdown();
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.text = symbol;
+    _searchController.addListener(_onSearchChanged);
+    _searchResults = [];
+    _triggerScan(symbol);
+  }
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _removeDropdown();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -269,52 +427,66 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    hintText: "Enter Symbol (e.g. RELIANCE, TCS)",
-                    hintStyle: const TextStyle(color: Colors.white24, fontSize: 13),
-                    filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.03),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+          // Search row with CompositedTransformTarget for Overlay positioning
+          CompositedTransformTarget(
+            link: _layerLink,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    decoration: InputDecoration(
+                      hintText: "Search company (e.g. BANK, TATA, HDFC)",
+                      hintStyle: const TextStyle(color: Colors.white24, fontSize: 13),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.03),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      prefixIcon: const Icon(Icons.search_rounded, color: Colors.white30, size: 18),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close_rounded, color: Colors.white30, size: 18),
+                              onPressed: () {
+                                _searchController.clear();
+                                _removeDropdown();
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Colors.cyanAccent, width: 1.5),
+                      ),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: Colors.cyanAccent, width: 1.5),
-                    ),
-                  ),
-                  onSubmitted: (val) => _triggerScan(val),
-                ),
-              ),
-              const SizedBox(width: 12),
-              GestureDetector(
-                onTap: isScanning ? null : () => _triggerScan(_searchController.text),
-                child: Container(
-                  height: 52,
-                  width: 52,
-                  decoration: BoxDecoration(
-                    color: isScanning ? Colors.white10 : Colors.cyanAccent.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: isScanning ? Colors.white10 : Colors.cyanAccent.withValues(alpha: 0.3),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.search_rounded,
-                    color: isScanning ? Colors.white30 : Colors.cyanAccent,
+                    onSubmitted: (val) => _selectStock(val.trim().toUpperCase()),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: isScanning ? null : () => _selectStock(_searchController.text.trim().toUpperCase()),
+                  child: Container(
+                    height: 52,
+                    width: 52,
+                    decoration: BoxDecoration(
+                      color: isScanning ? Colors.white10 : Colors.cyanAccent.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isScanning ? Colors.white10 : Colors.cyanAccent.withValues(alpha: 0.3),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.search_rounded,
+                      color: isScanning ? Colors.white30 : Colors.cyanAccent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           _buildPriceFilters(),
@@ -328,10 +500,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               return GestureDetector(
                 onTap: isScanning
                     ? null
-                    : () {
-                        _searchController.text = symbol;
-                        _triggerScan(symbol);
-                      },
+                    : () => _selectStock(symbol),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(

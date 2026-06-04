@@ -77,6 +77,18 @@ class ApiService {
     return false;
   }
 
+  Future<List<dynamic>> searchStocks(String query) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/search-stocks?q=${Uri.encodeComponent(query)}'));
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("Error searching stocks: $e");
+    }
+    return [];
+  }
+
   Future<Map<String, dynamic>?> analyzeStock(String symbol) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/analyze-stock?symbol=$symbol'));

@@ -344,6 +344,16 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
+  Future<List<Map<String, dynamic>>> searchStocks(String query) async {
+    if (query.isEmpty) return [];
+    try {
+      final results = await _apiService.searchStocks(query);
+      return results.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   Future<bool> executeStockTrade(String symbol, String side) async {
     try {
       final res = await _apiService.executeStockTrade(symbol, side);
