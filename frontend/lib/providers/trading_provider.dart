@@ -58,6 +58,25 @@ class TradingProvider with ChangeNotifier {
 
   // Computed getters for daily / weekly / monthly PnL
   double get todayPnl {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    double calculatedPnl = 0.0;
+    bool hasClosedTrades = false;
+
+    for (final sig in _signals) {
+      final int ts = sig['timestamp'] is num 
+          ? (sig['timestamp'] as num).toInt() 
+          : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+      if (ts >= todayStart && sig['status'] == 'CLOSED') {
+        calculatedPnl += (sig['pnl'] as num?)?.toDouble() ?? 0.0;
+        hasClosedTrades = true;
+      }
+    }
+
+    if (hasClosedTrades) {
+      return calculatedPnl;
+    }
+
     final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
     final rec = _dailyPnlRecords.firstWhere(
       (r) => r['date'] == today,
