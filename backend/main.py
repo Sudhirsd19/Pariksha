@@ -246,13 +246,36 @@ async def ltp_broadcaster():
 async def root():
     return {"message": "QuantumIndex Backend Running"}
 
+async def refresh_signals():
+    global signals
+    try:
+        from backend.config.firebase_config import get_db
+        db = get_db()
+        if db:
+            from datetime import timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            start_of_day_ist = datetime.now(ist_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+            start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
+            
+            trades_query = db.collection("quantum_trades").where("timestamp", ">=", start_of_day_ms).order_by("timestamp").stream()
+            new_signals = []
+            for doc in trades_query:
+                trade_data = doc.to_dict()
+                trade_data['id'] = doc.id
+                new_signals.append(trade_data)
+            signals = new_signals
+    except Exception as e:
+        print(f"Error refreshing signals from Firestore: {e}")
+
 @app.get("/logs")
 async def get_logs():
+    await refresh_signals()
     return signals
 
 @app.get("/status")
 async def get_status():
     global current_ltp
+    await refresh_signals()
     
     sentiment = "Neutral"
     sentiment_score = 0.5
