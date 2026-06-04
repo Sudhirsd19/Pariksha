@@ -52,13 +52,18 @@ class _LogsScreenState extends State<LogsScreen> {
       if (_selectedDate == null) return true;
       final timestamp = log['timestamp'];
       if (timestamp == null) return false;
-      final dt = DateTime.fromMillisecondsSinceEpoch(
-        timestamp is int ? timestamp : int.tryParse(timestamp.toString()) ?? 0
-      );
+      final dt = DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(timestamp));
       return dt.year == _selectedDate!.year &&
              dt.month == _selectedDate!.month &&
              dt.day == _selectedDate!.day;
     }).toList();
+
+    // Sort: Latest closed or open trades at the top (using exit_time or entry timestamp)
+    filteredLogs.sort((a, b) {
+      final aTime = a['exit_time'] ?? a['timestamp'] ?? 0;
+      final bTime = b['exit_time'] ?? b['timestamp'] ?? 0;
+      return _parseTimestamp(bTime).compareTo(_parseTimestamp(aTime));
+    });
 
     return Scaffold(
       backgroundColor: const Color(0xFF040408),
@@ -191,6 +196,7 @@ class _LogsScreenState extends State<LogsScreen> {
   Widget _buildCyberLogTile(dynamic log) {
     final isBuy = log['signal'] == 'BUY';
     final Color color = isBuy ? Colors.greenAccent : Colors.redAccent;
+    final bool isClosed = log['status'] == 'CLOSED';
     
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -236,9 +242,13 @@ class _LogsScreenState extends State<LogsScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          if (isClosed) ...[
+                            _buildResultBadge(log['result'] ?? 'CLOSED'),
+                            const SizedBox(width: 8),
+                          ],
                           Text(
                             log['timestamp'] != null 
-                              ? "${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).hour.toString().padLeft(2,'0')}:${DateTime.fromMillisecondsSinceEpoch(log['timestamp'] is int ? log['timestamp'] : int.tryParse(log['timestamp'].toString()) ?? 0).minute.toString().padLeft(2,'0')}"
+                              ? "${DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(log['timestamp'])).hour.toString().padLeft(2,'0')}:${DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(log['timestamp'])).minute.toString().padLeft(2,'0')}"
                               : 'NOW',
                             style: const TextStyle(color: Colors.white60, fontSize: 9, fontWeight: FontWeight.bold),
                           ),
@@ -247,13 +257,27 @@ class _LogsScreenState extends State<LogsScreen> {
                       const SizedBox(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(child: _buildMiniBadge('PRICE', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
-                          const SizedBox(width: 8),
-                          Expanded(child: _buildMiniBadge('SL', '${log['sl'] ?? '0.0'}', Colors.redAccent)),
-                          const SizedBox(width: 8),
-                          Expanded(child: _buildMiniBadge('TP', '${log['tp'] ?? '0.0'}', Colors.greenAccent)),
-                        ],
+                        children: isClosed
+                            ? [
+                                Expanded(child: _buildMiniBadge('ENTRY', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
+                                const SizedBox(width: 8),
+                                Expanded(child: _buildMiniBadge('EXIT', '₹${log['exit_price'] ?? '0.0'}', Colors.orangeAccent)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildMiniBadge(
+                                    'PNL', 
+                                    '${((log['pnl'] ?? 0.0) as num) >= 0 ? '+' : ''}₹${((log['pnl'] ?? 0.0) as num).toStringAsFixed(2)}', 
+                                    ((log['pnl'] ?? 0.0) as num) >= 0 ? Colors.greenAccent : Colors.redAccent
+                                  ),
+                                ),
+                              ]
+                            : [
+                                Expanded(child: _buildMiniBadge('PRICE', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
+                                const SizedBox(width: 8),
+                                Expanded(child: _buildMiniBadge('SL', '${log['sl'] ?? '0.0'}', Colors.redAccent)),
+                                const SizedBox(width: 8),
+                                Expanded(child: _buildMiniBadge('TP', '${log['tp'] ?? '0.0'}', Colors.greenAccent)),
+                              ],
                       ),
                       const SizedBox(height: 16),
                       Container(
@@ -286,6 +310,34 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
+  Widget _buildResultBadge(String result) {
+    Color badgeColor;
+    if (result == 'TARGET') {
+      badgeColor = Colors.greenAccent;
+    } else if (result == 'STOPLOSS') {
+      badgeColor = Colors.redAccent;
+    } else {
+      badgeColor = Colors.white54;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: badgeColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: badgeColor.withValues(alpha: 0.2)),
+      ),
+      child: Text(
+        result,
+        style: TextStyle(
+          color: badgeColor,
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
   Widget _buildMiniBadge(String label, String value, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,5 +347,11 @@ class _LogsScreenState extends State<LogsScreen> {
         Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
       ],
     );
+  }
+
+  int _parseTimestamp(dynamic ts) {
+    if (ts == null) return 0;
+    if (ts is num) return ts.toInt();
+    return double.tryParse(ts.toString())?.toInt() ?? 0;
   }
 }
