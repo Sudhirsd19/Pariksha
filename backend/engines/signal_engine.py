@@ -172,7 +172,7 @@ class SignalEngine:
             sl = entry - (atr_14 * atr_multiplier_sl)
             tp = entry + (atr_14 * atr_multiplier_tp)
 
-        # --- Order Block Validation (Extra Confirmation) ---
+        # --- Order Block Validation (Extra Confirmation) --- FIX H-2: Called only once, result reused
         ob_valid = self.struct_engine.validate_order_block(df_5m, len(df_5m) - 1)
 
         return {
@@ -182,11 +182,12 @@ class SignalEngine:
             'tp': round(tp, 2),
             'atr': round(atr_14, 2),
             'score': eval_result.get('score', 0),
-            'order_block_valid': self.struct_engine.validate_order_block(df_5m, len(df_5m) - 1),
+            'order_block_valid': ob_valid,  # FIX H-2: Reuse computed result
             'reason': (
                 f"SMC | Score: {eval_result['score']} | Phase: {eval_result['phase']} | "
                 f"Killzone: {eval_result['in_killzone']} | "
                 f"ATR SL: {round(atr_14 * atr_multiplier_sl, 1)} pts"
             )
         }
+
 

@@ -23,11 +23,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       Provider.of<TradingProvider>(context, listen: false).fetchAnalyticsAndPnl();
     });
     
-    _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
+    _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      // FIX HIGH-02: Removed fetchLogs() from this timer — Firestore real-time listener
+      // now handles live signal updates. fetchStatus() kept only as a lightweight
+      // fallback for LTP if WebSocket hasn't connected yet.
       if (mounted) {
         final provider = Provider.of<TradingProvider>(context, listen: false);
         provider.fetchStatus();
-        provider.fetchLogs();
+        // fetchAnalyticsAndPnl is a no-op (handled by Firestore listener)
         provider.fetchAnalyticsAndPnl();
       }
     });

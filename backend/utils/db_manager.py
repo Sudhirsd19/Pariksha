@@ -87,11 +87,13 @@ class DatabaseManager:
         
         try:
             from google.cloud.firestore_v1 import Increment
+            from datetime import timedelta
             
-            # IST = UTC+5:30
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            # FIX H-5: Use IST date — was UTC which could split a trading day across two docs
+            IST = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(IST)
+            today = now.strftime("%Y-%m-%d")  # IST date (not UTC)
             # Also calculate week key (ISO week) and month key
-            now = datetime.now(timezone.utc)
             week_key  = f"{now.year}-W{now.strftime('%V')}"
             month_key = now.strftime("%Y-%m")
 

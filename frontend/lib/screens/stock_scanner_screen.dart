@@ -875,13 +875,21 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
             );
           }
 
-          // Daily lock check: prevent trading the same stock if it was already traded today
+          // Daily lock check: prevent trading the same stock if it was already traded TODAY
+          // FIX HIGH-08: Was missing date filter — yesterday's closed trades were locking stock permanently
+          final nowForLock = DateTime.now();
+          final todayStartMs = DateTime(nowForLock.year, nowForLock.month, nowForLock.day).millisecondsSinceEpoch;
           final closedTrades = provider.signals.where(
             (sig) {
               final String sigSym = sig['symbol'] ?? '';
               final isMatch = sigSym == "$symbol-EQ" || sigSym == symbol;
               final isClosed = sig['status'] == "CLOSED";
-              return isMatch && isClosed;
+              // FIX HIGH-08: Only count TODAY's trades for the daily lock
+              final int ts = sig['timestamp'] is num 
+                  ? (sig['timestamp'] as num).toInt()
+                  : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+              final isToday = ts >= todayStartMs;
+              return isMatch && isClosed && isToday;
             }
           ).toList();
           final bool isLockedToday = closedTrades.isNotEmpty;

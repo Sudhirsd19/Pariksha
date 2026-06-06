@@ -19,14 +19,12 @@ class RiskManager:
         self.max_weekly_loss_pct = 0.05 # 5%
         self.max_drawdown_pct = 0.10 # 10%
         self.trades_today = 0
-        self.max_trades = 10 
+        self.max_trades = config.MAX_TRADES_PER_DAY  # FIX C-3: Was hardcoded 10, config says 5
         self.risk_per_trade_pct = 0.01 # 1%
 
-        # High Impact News Windows (Mock)
-        self.news_events = [
-            "2026-05-15 10:00",
-            "2026-05-20 14:30",
-        ]
+        # FIX H-3: Removed stale hardcoded May 2026 news events — those dates are past and the check was dead.
+        # News events are now loaded dynamically from Firestore at check-time.
+        self.news_events = []  # Populated from Firestore: quantum_system/news_events
 
     def is_news_window(self):
         """Check if we are currently in a high-impact news window."""
@@ -34,11 +32,27 @@ class RiskManager:
         from datetime import timezone, timedelta
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now = datetime.datetime.now(ist_tz).replace(tzinfo=None)
+        
+        # FIX H-3: Load news events from Firestore dynamically
+        try:
+            from backend.config.firebase_config import get_db
+            db = get_db()
+            if db:
+                doc = db.collection("quantum_system").document("news_events").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    self.news_events = data.get("events", [])
+        except Exception:
+            pass  # Use existing list if Firestore is unavailable
+        
         for event_str in self.news_events:
-            event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
-            diff = abs((now - event_time).total_seconds() / 60)
-            if diff <= 30: # 30 min buffer
-                return True
+            try:
+                event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
+                diff = abs((now - event_time).total_seconds() / 60)
+                if diff <= 30:  # 30 min buffer around event
+                    return True
+            except ValueError:
+                continue
         return False
 
     def is_restricted_time_window(self):
@@ -46,8 +60,9 @@ class RiskManager:
         from datetime import timezone, timedelta
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now = datetime.datetime.now(ist_tz)
-        # Block 9:15 to 9:30 AM
-        if now.hour == 9 and 15 <= now.minute < 30:
+        # FIX H-4: Was blocking 9:15-9:30 which conflicts with morning killzone (9:15-10:45).
+        # Now only blocks the first 5 min (price discovery), allowing killzone to operate from 9:20.
+        if now.hour == 9 and 15 <= now.minute < 20:
             return True
         # Block 1:00 PM to 1:30 PM (European market open volatility)
         if now.hour == 13 and 0 <= now.minute < 30:
@@ -119,7 +134,11 @@ class RiskManager:
 
     def update_pnl(self, pnl, side=None):
         """Updates daily trackers and exposure."""
-        self.daily_loss -= pnl 
+        # FIX C-3: daily_loss was inverted — losses were decreasing it (daily_loss -= negative_pnl = increase)
+        # Now losses correctly accumulate as a positive value for comparison against threshold
+        if pnl < 0:
+            self.daily_loss += abs(pnl)  # Accumulate realized losses as positive total
+            self.weekly_loss += abs(pnl)
         self.trades_today += 1
         
         self.capital += pnl

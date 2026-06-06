@@ -108,6 +108,8 @@ class TradingProvider with ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   WebSocketChannel? _wsChannel;
   StreamSubscription? _wsSubscription;
+  // FIX CRIT-05: Store all Firestore subscriptions so they can be properly cancelled in dispose()
+  final List<StreamSubscription> _firestoreSubscriptions = [];
   bool _wsConnected = false;
   bool get wsConnected => _wsConnected;
 
@@ -116,12 +118,21 @@ class TradingProvider with ChangeNotifier {
     _connectWebSocket();
     _startWatchlistRefreshTimer();
     
-    // Fallback polling for logs/signals to support local SQLite data display when Firestore quota is exceeded
-    Timer.periodic(const Duration(seconds: 5), (_) => fetchLogs());
+    // FIX H-7: Removed unconditional 5-second polling timer that was racing with Firestore listener.
+    // fetchLogs() is now only called explicitly when needed (e.g. from LogsScreen sync button).
+    // Firestore real-time listener handles live signal updates. SQLite fallback is triggered by
+    // Firestore errors (handled in _initFirestoreListeners onError callback).
   }
 
+  bool _wsReconnecting = false; // FIX HIGH-03: Guard against simultaneous reconnect attempts
+
   void _connectWebSocket() {
+    if (_wsReconnecting) return; // FIX HIGH-03: Prevent double-reconnect
+    _wsReconnecting = true;
     try {
+      // FIX HIGH-03: Cancel existing subscription before creating new one
+      _wsSubscription?.cancel();
+      _wsChannel?.sink.close();
       // ws://10.0.2.2:8000/ws/market -> emulator tunnels 10.0.2.2 to host machine
       _wsChannel = WebSocketChannel.connect(
         Uri.parse(kDebugMode
@@ -130,6 +141,7 @@ class TradingProvider with ChangeNotifier {
       );
       _wsSubscription = _wsChannel!.stream.listen(
         (data) {
+          _wsReconnecting = false;
           _wsConnected = true;
           final jsonData = jsonDecode(data as String);
           _ltp = (jsonData['ltp'] as num?)?.toDouble() ?? _ltp;
@@ -155,26 +167,34 @@ class TradingProvider with ChangeNotifier {
         },
         onError: (e) {
           _wsConnected = false;
+          _wsReconnecting = false;
           notifyListeners();
           Future.delayed(const Duration(seconds: 3), _connectWebSocket);
         },
         onDone: () {
           _wsConnected = false;
+          _wsReconnecting = false;
           notifyListeners();
           Future.delayed(const Duration(seconds: 3), _connectWebSocket);
         },
       );
     } catch (e) {
       _wsConnected = false;
+      _wsReconnecting = false;
       Future.delayed(const Duration(seconds: 3), _connectWebSocket);
     }
   }
+
 
   @override
   void dispose() {
     _wsSubscription?.cancel();
     _wsChannel?.sink.close();
     _watchlistRefreshTimer?.cancel();
+    // FIX CRIT-05: Cancel all Firestore listeners to prevent memory leaks and ghost notifyListeners() calls
+    for (final sub in _firestoreSubscriptions) {
+      sub.cancel();
+    }
     super.dispose();
   }
 
@@ -188,77 +208,99 @@ class TradingProvider with ChangeNotifier {
     }
 
     // Listen to system status
-    _firestore.collection('quantum_system').doc('live_status').snapshots().listen((doc) {
-      if (doc.exists) {
-        final data = doc.data()!;
-        _isActive = data['is_active'] ?? _isActive;
-        _dailyLoss = (data['daily_loss'] as num?)?.toDouble() ?? _dailyLoss;
-        _tradesToday = data['trades_today'] ?? _tradesToday;
-        _hardLockReason = data['hard_lock_reason'];
-        _inKillzone = data['in_killzone'] ?? true;
-        _currentScore = data['current_score'] ?? 0;
-        notifyListeners();
-      }
-    });
+    _firestoreSubscriptions.add(
+      _firestore.collection('quantum_system').doc('live_status').snapshots().listen((doc) {
+        if (doc.exists) {
+          final data = doc.data()!;
+          _isActive = data['is_active'] ?? _isActive;
+          _dailyLoss = (data['daily_loss'] as num?)?.toDouble() ?? _dailyLoss;
+          _tradesToday = data['trades_today'] ?? _tradesToday;
+          _hardLockReason = data['hard_lock_reason'];
+          _inKillzone = data['in_killzone'] ?? true;
+          _currentScore = data['current_score'] ?? 0;
+          notifyListeners();
+        }
+      }, onError: (e) => debugPrint('Firestore live_status error: $e')),
+    );
 
     // Listen to PnL & Analytics
-    _firestore.collection('quantum_system').doc('pnl_data').snapshots().listen((doc) {
-      if (doc.exists) {
-        final data = doc.data()!;
-        _pnlData = data;
-        _analyticsData = data; // Both use the same doc now
-        notifyListeners();
-      }
-    });
+    _firestoreSubscriptions.add(
+      _firestore.collection('quantum_system').doc('pnl_data').snapshots().listen((doc) {
+        if (doc.exists) {
+          final data = doc.data()!;
+          _pnlData = data;
+          _analyticsData = data; // Both use the same doc now
+          notifyListeners();
+        }
+      }, onError: (e) => debugPrint('Firestore pnl_data error: $e')),
+    );
 
     // Listen to Settings
-    _firestore.collection('quantum_system').doc('settings').snapshots().listen((doc) {
-      if (doc.exists) {
-        _systemSettings = doc.data()!;
-        notifyListeners();
-      }
-    });
+    _firestoreSubscriptions.add(
+      _firestore.collection('quantum_system').doc('settings').snapshots().listen((doc) {
+        if (doc.exists) {
+          _systemSettings = doc.data()!;
+          notifyListeners();
+        }
+      }, onError: (e) => debugPrint('Firestore settings error: $e')),
+    );
 
     // Listen to trades
-    _firestore.collection('quantum_trades').orderBy('timestamp', descending: true).limit(50).snapshots().listen((snapshot) {
-      _signals.clear();
-      for (var doc in snapshot.docs) {
-        _signals.add(doc.data());
-      }
-      notifyListeners();
-    });
+    _firestoreSubscriptions.add(
+      _firestore.collection('quantum_trades').orderBy('timestamp', descending: true).limit(50).snapshots().listen((snapshot) {
+        // FIX H-4: Assign atomically to avoid partial-list reads during the clear+addAll window
+        final newSignals = snapshot.docs.map((doc) {
+          // FIX H-6: Include document ID in signal data (was missing, causing sig['id'] == null)
+          final data = Map<String, dynamic>.from(doc.data());
+          data['id'] = doc.id;
+          return data as dynamic;
+        }).toList();
+        _signals
+          ..clear()
+          ..addAll(newSignals);
+        notifyListeners();
+      }, onError: (e) {
+        debugPrint('Firestore quantum_trades error: $e — falling back to HTTP polling');
+        // FIX H-7: Only poll from API when Firestore fails
+        fetchLogs();
+      }),
+    );
 
     // Listen to daily PnL records (last 90 days covers daily/weekly/monthly)
     final ninetyDaysAgo = DateTime.now().toUtc().subtract(const Duration(days: 90));
     final cutoff = '${ninetyDaysAgo.year}-${ninetyDaysAgo.month.toString().padLeft(2,'0')}-${ninetyDaysAgo.day.toString().padLeft(2,'0')}';
 
-    _firestore
-        .collection('pnl_daily')
-        .where('date', isGreaterThanOrEqualTo: cutoff)
-        .orderBy('date', descending: true)
-        .snapshots()
-        .listen((snapshot) {
-      _dailyPnlRecords = snapshot.docs.map((d) => d.data()).toList();
-      notifyListeners();
-    });
+    _firestoreSubscriptions.add(
+      _firestore
+          .collection('pnl_daily')
+          .where('date', isGreaterThanOrEqualTo: cutoff)
+          .orderBy('date', descending: true)
+          .snapshots()
+          .listen((snapshot) {
+        _dailyPnlRecords = snapshot.docs.map((d) => d.data()).toList();
+        notifyListeners();
+      }, onError: (e) => debugPrint('Firestore pnl_daily error: $e')),
+    );
 
     // Listen to Watchlist
-    _firestore.collection('quantum_system').doc('watchlist').snapshots().listen((doc) {
-      if (doc.exists) {
-        final data = doc.data();
-        if (data != null && data['items'] != null) {
-          _watchlist = List<Map<String, dynamic>>.from(
-            (data['items'] as List<dynamic>).map((e) => Map<String, dynamic>.from(e as Map)),
-          );
+    _firestoreSubscriptions.add(
+      _firestore.collection('quantum_system').doc('watchlist').snapshots().listen((doc) {
+        if (doc.exists) {
+          final data = doc.data();
+          if (data != null && data['items'] != null) {
+            _watchlist = List<Map<String, dynamic>>.from(
+              (data['items'] as List<dynamic>).map((e) => Map<String, dynamic>.from(e as Map)),
+            );
+          } else {
+            _watchlist = [];
+          }
+          notifyListeners();
         } else {
           _watchlist = [];
+          notifyListeners();
         }
-        notifyListeners();
-      } else {
-        _watchlist = [];
-        notifyListeners();
-      }
-    });
+      }, onError: (e) => debugPrint('Firestore watchlist error: $e')),
+    );
   }
 
   Future<void> fetchStatus() async {
@@ -484,51 +526,46 @@ class TradingProvider with ChangeNotifier {
       final List<Map<String, dynamic>> updatedList = List<Map<String, dynamic>>.from(_watchlist);
       bool changesMade = false;
 
-      final futures = updatedList.map((item) async {
+      // FIX M-8: Was using Future.wait() which fired all requests simultaneously.
+      // AngelOne rate limit is 3 req/sec; each analyzeStock() makes 2 API calls.
+      // Now processes sequentially with a 600ms gap to stay safely under the limit.
+      for (final item in updatedList) {
         final symbol = item['symbol'];
-        if (symbol == null) return null;
+        if (symbol == null) continue;
         try {
           final res = await _apiService.analyzeStock(symbol);
-          return {"symbol": symbol, "res": res};
-        } catch (e) {
-          debugPrint("Error fetching refresh for $symbol: $e");
-          return null;
-        }
-      }).toList();
+          if (res != null && res['status'] == 'success') {
+            final double newLtp = (res['ltp'] as num?)?.toDouble() ?? 0.0;
+            final int newScore = res['score'] ?? 0;
+            final bool actionable = res['actionable'] ?? false;
+            final String htfTrend = res['htf_trend'] ?? "NEUTRAL";
 
-      final results = await Future.wait(futures);
+            String recommendation = "NEUTRAL";
+            if (newScore >= 70) {
+              recommendation = htfTrend == "Bullish" ? "BUY" : "SELL";
+            }
 
-      for (final result in results) {
-        if (result == null) continue;
-        final String symbol = result['symbol'] as String;
-        final res = result['res'];
-        if (res != null && res['status'] == 'success') {
-          final double newLtp = (res['ltp'] as num?)?.toDouble() ?? 0.0;
-          final int newScore = res['score'] ?? 0;
-          final bool actionable = res['actionable'] ?? false;
-          final String htfTrend = res['htf_trend'] ?? "NEUTRAL";
-
-          String recommendation = "NEUTRAL";
-          if (newScore >= 70) {
-            recommendation = htfTrend == "Bullish" ? "BUY" : "SELL";
-          }
-
-          final idx = updatedList.indexWhere((item) => item['symbol'] == symbol);
-          if (idx != -1) {
-            final oldItem = updatedList[idx];
-            if (oldItem['ltp'] != newLtp || oldItem['score'] != newScore || oldItem['recommendation'] != recommendation) {
-              updatedList[idx] = {
-                ...oldItem,
-                "ltp": newLtp,
-                "score": newScore,
-                "recommendation": recommendation,
-                "actionable": actionable,
-                "timestamp": DateTime.now().millisecondsSinceEpoch,
-              };
-              changesMade = true;
+            final idx = updatedList.indexWhere((i) => i['symbol'] == symbol);
+            if (idx != -1) {
+              final oldItem = updatedList[idx];
+              if (oldItem['ltp'] != newLtp || oldItem['score'] != newScore || oldItem['recommendation'] != recommendation) {
+                updatedList[idx] = {
+                  ...oldItem,
+                  "ltp": newLtp,
+                  "score": newScore,
+                  "recommendation": recommendation,
+                  "actionable": actionable,
+                  "timestamp": DateTime.now().millisecondsSinceEpoch,
+                };
+                changesMade = true;
+              }
             }
           }
+        } catch (e) {
+          debugPrint("Error fetching refresh for $symbol: $e");
         }
+        // Delay between stocks to respect AngelOne 3 req/sec rate limit
+        await Future.delayed(const Duration(milliseconds: 600));
       }
 
       if (changesMade) {

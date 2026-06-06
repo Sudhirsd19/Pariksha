@@ -266,63 +266,69 @@ class TradeManager:
 
     def emergency_square_off(self, ltp_dict):
         trades_to_close = []
-        for trade in self.active_trades:
-            token = trade.get("token")
-            if not token or token not in ltp_dict:
-                exit_price = trade["entry"]
-            else:
-                exit_price = ltp_dict[token]
-            
-            if trade.get("instrument_type") == "OPTIONS":
-                pnl = (exit_price - trade["entry"]) * trade["qty"]
-            else:
-                if trade["signal"] == "BUY":
+        with self._lock:  # FIX C-2: Hold lock to prevent race with monitor_trades()
+            for trade in list(self.active_trades):  # FIX C-2: Iterate copy under lock
+                token = trade.get("token")
+                if not token or token not in ltp_dict:
+                    exit_price = trade["entry"]
+                else:
+                    exit_price = ltp_dict[token]
+                
+                if trade.get("instrument_type") == "OPTIONS":
                     pnl = (exit_price - trade["entry"]) * trade["qty"]
                 else:
-                    pnl = (trade["entry"] - exit_price) * trade["qty"]
+                    if trade["signal"] == "BUY":
+                        pnl = (exit_price - trade["entry"]) * trade["qty"]
+                    else:
+                        pnl = (trade["entry"] - exit_price) * trade["qty"]
+                    
+                charges = 60.0 
+                net_pnl = pnl - charges
+
+                self.realized_pnl += net_pnl
+                self.total_charges += charges
+                self.total_trades += 1
                 
-            charges = 60.0 
-            net_pnl = pnl - charges
+                if net_pnl > 0:
+                    self.winning_trades += 1
+                    self.gross_profit += net_pnl
+                else:
+                    self.losing_trades += 1
+                    self.gross_loss += abs(net_pnl)
 
-            self.realized_pnl += net_pnl
-            self.total_charges += charges
-            self.total_trades += 1
-            
-            if net_pnl > 0:
-                self.winning_trades += 1
-                self.gross_profit += net_pnl
-            else:
-                self.losing_trades += 1
-                self.gross_loss += abs(net_pnl)
+                self.pnl_history.append(self.realized_pnl)
+                
+                if self.realized_pnl > self.peak_pnl:
+                    self.peak_pnl = self.realized_pnl
+                
+                current_dd = self.peak_pnl - self.realized_pnl
+                if self.peak_pnl > 0:
+                    dd_percent = (current_dd / self.peak_pnl) * 100
+                    if dd_percent > self.max_drawdown:
+                        self.max_drawdown = dd_percent
+                
+                exit_time = int(time.time() * 1000)
+                update_data = {
+                    "status": "CLOSED",
+                    "exit_price": exit_price,
+                    "exit_time": exit_time,
+                    "pnl": net_pnl,
+                    "result": "SQUARE_OFF"
+                }
+                
+                # FIX M-4: Update SQLite so trades don't reappear as OPEN after restart
+                persistence_manager.update_trade_exit(trade["id"], exit_price, exit_time, net_pnl, "SQUARE_OFF")
+                persistence_manager.log_event("INFO", "EMERGENCY_SQUARE_OFF", f"ID: {trade['id']} | PnL: {net_pnl:.2f}")
+                
+                db_manager.update_trade(trade["id"], update_data)
+                db_manager.save_daily_pnl(net_pnl, charges, net_pnl > 0)
+                self._sync_analytics()
+                
+                trade["close_data"] = update_data
+                trades_to_close.append(trade)
 
-            self.pnl_history.append(self.realized_pnl)
-            
-            if self.realized_pnl > self.peak_pnl:
-                self.peak_pnl = self.realized_pnl
-            
-            current_dd = self.peak_pnl - self.realized_pnl
-            if self.peak_pnl > 0:
-                dd_percent = (current_dd / self.peak_pnl) * 100
-                if dd_percent > self.max_drawdown:
-                    self.max_drawdown = dd_percent
-            
-            update_data = {
-                "status": "CLOSED",
-                "exit_price": exit_price,
-                "exit_time": int(time.time() * 1000),
-                "pnl": net_pnl,
-                "result": "SQUARE_OFF"
-            }
-            
-            db_manager.update_trade(trade["id"], update_data)
-            db_manager.save_daily_pnl(net_pnl, charges, net_pnl > 0)
-            self._sync_analytics()
-            
-            trade["close_data"] = update_data
-            trades_to_close.append(trade)
-
-        for t in trades_to_close:
-            self.active_trades.remove(t)
+            for t in trades_to_close:
+                self.active_trades.remove(t)
             
         return len(trades_to_close)
 

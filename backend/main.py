@@ -19,7 +19,7 @@ import sys
 import json
 import random
 import time
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone, timedelta
 
 # Add project root to sys.path to handle module imports correctly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -114,7 +114,7 @@ async def startup_event():
         from backend.config.firebase_config import get_db
         db = get_db()
         if db:
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")  # FIX H-5: Use IST date
             doc = db.collection("pnl_daily").document(today).get()
             if doc.exists:
                 data = doc.to_dict()
@@ -232,10 +232,17 @@ async def ltp_broadcaster():
                     simulated_ltps[token] = ltp
                 current_ltps[token] = ltp
 
-            # 2. Monitor open trades
-            closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
-            for trade in (closed_trades or []):
-                send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
+            # 2. Monitor open trades (only during market hours to prevent simulated drift from closing trades)
+            now_ist = config.get_ist_time()
+            is_market_open = (
+                now_ist.weekday() < 5 and  # Monday-Friday
+                dt_time(9, 15) <= now_ist.time() <= dt_time(15, 30)  # 9:15 AM to 3:30 PM IST
+            )
+            # FIX C-4: Don't run trade monitoring outside market hours to prevent false SL/TP hits from drift
+            if is_market_open or is_paper_trading:
+                closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
+                for trade in (closed_trades or []):
+                    send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
 
             # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
             if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
@@ -402,7 +409,10 @@ async def get_pnl():
     return {
         "realized_pnl": round(tm.realized_pnl, 2),
         "total_charges": round(tm.total_charges, 2),
-        "net_pnl": round(tm.realized_pnl - tm.total_charges, 2),
+        # FIX M-3: realized_pnl is already NET of charges (net_pnl = pnl - charges in monitor_trades)
+        # Previously was: tm.realized_pnl - tm.total_charges which double-deducted brokerage
+        "net_pnl": round(tm.realized_pnl, 2),
+        "gross_pnl": round(tm.realized_pnl + tm.total_charges, 2),
         "total_trades": tm.total_trades,
         "winning_trades": tm.winning_trades,
         "losing_trades": tm.losing_trades,
@@ -807,13 +817,16 @@ async def trading_loop():
             now = config.get_ist_time()
             
             # --- AUTO-SQUAREOFF ---
-            # 3:10 PM forced square-off to beat the broker's 3:15 PM auto-square-off penalty (approx ₹60)
+            # 3:10 PM forced square-off to beat the broker's 3:15 PM auto-square-off penalty (approx Rs.60)
             if now.hour == 15 and now.minute >= 10:
-                print("[Auto-Squareoff] 3:10 PM reached. Squaring off all positions.")
-                await square_off()
-                trading_active = False # Stop trading for the day
-                await asyncio.to_thread(sync_status_to_db)
-                continue
+                if trading_active:  # FIX C-1: Check flag first to prevent re-entry on repeated loop iterations
+                    print("[Auto-Squareoff] 3:10 PM reached. Squaring off all positions.")
+                    trading_active = False  # FIX C-1: Set flag BEFORE calling square_off to prevent double-call
+                    await asyncio.to_thread(sync_status_to_db)
+                    ltp_dict = ws_manager.ltp_data if ws_manager else {}
+                    trade_manager.emergency_square_off(ltp_dict)
+                    await asyncio.to_thread(broker.square_off_all)
+                break  # FIX C-1: Always exit loop after 3:10 PM — no more iterations
             
             # Midnight Reset Check for continuous 24/7 VPS deployments
             today_date = now.date()
@@ -980,6 +993,9 @@ async def trading_loop():
                         doc_id = db_manager.save_signal(signal_data)
                         trade_manager.add_trade(signal_data, doc_id)
                         signals.append(signal_data)
+                        # FIX C-6: Cap in-memory signals list to prevent memory leak on long deployments
+                        if len(signals) > 200:
+                            signals = signals[-200:]
                         send_push_notification(f"🚀 SIGNAL: {trade_symbol} {side}", f"Entry: {signal_data['actual_entry']}")
                         cooldown_engine.update_last_trade()
                         await asyncio.to_thread(sync_status_to_db)

@@ -45,10 +45,15 @@ class MarketWebSocket:
     def on_close(self, wsapp):
         print("WebSocket Closed")
         self.running = False
-        if health_monitor.is_connected:
-            print("Attempting to reconnect WebSocket...")
+        # FIX L-5: Removed is_connected guard — was False on first connect so reconnection was SKIPPED
+        # FIX L-6: Replaced blocking time.sleep(5) with a daemon thread to avoid blocking the WS thread
+        print("Attempting to reconnect WebSocket in 5s...")
+        def delayed_reconnect():
             time.sleep(5)
-            self.connect()
+            if not self.running:  # Only reconnect if still disconnected
+                self.connect()
+        t = threading.Thread(target=delayed_reconnect, daemon=True)
+        t.start()
 
     def connect(self):
         self.sws = SmartWebSocketV2(self.auth_token, self.api_key, self.client_code, self.feed_token)
