@@ -3,6 +3,15 @@ from backend.utils.db_manager import db_manager
 import time
 import threading
 
+# Telegram Alerts — imported lazily inside methods to avoid circular imports
+try:
+    from backend.utils.telegram_notifier import (
+        notify_trade_entry, notify_trade_exit, notify_sl_moved_to_breakeven
+    )
+    _TG_AVAILABLE = True
+except Exception:
+    _TG_AVAILABLE = False
+
 class TradeManager:
     def __init__(self):
         self._lock = threading.Lock()
@@ -52,6 +61,22 @@ class TradeManager:
             self.active_trades.append(trade)
             persistence_manager.save_trade(trade)
             persistence_manager.log_event("INFO", "TRADE_OPENED", f"ID: {doc_id} | {trade['signal']} {trade['symbol']}")
+
+            # Telegram: notify on trade entry
+            if _TG_AVAILABLE:
+                try:
+                    notify_trade_entry(
+                        signal=trade['signal'],
+                        symbol=trade['symbol'],
+                        entry=trade['entry'],
+                        sl=trade['sl'],
+                        tp=trade['tp'],
+                        qty=trade['qty'],
+                        instrument=trade.get('instrument_type', 'EQUITY'),
+                        is_paper=signal_data.get('is_paper', True),
+                    )
+                except Exception:
+                    pass
 
     def monitor_trades(self, ltp_dict):
         """
@@ -110,18 +135,24 @@ class TradeManager:
                                 if new_sl < trade['underlying_sl']:
                                     trade['underlying_sl'] = round(new_sl, 2)
                 else:
-                    # Futures Trailing SL
+                    # ── EQUITY / FUTURES TRAILING SL ──────────────────────
                     if trade['signal'] == 'BUY':
-                        tp_distance = trade['tp'] - trade['entry']
-                        current_profit = current_ltp - trade['entry']
-                        
-                        # Move SL to breakeven at 50% of target
-                        if current_profit >= tp_distance * 0.5:
-                            new_sl = trade['entry'] + (tp_distance * 0.1) # Breakeven + buffer
+                        tp_distance     = trade['tp'] - trade['entry']
+                        current_profit  = current_ltp - trade['entry']
+
+                        # STEP 1: Move SL to exact breakeven at 1:1 RR
+                        # (when profit >= full TP distance, i.e. 1:1 achieved)
+                        if current_profit >= tp_distance and trade['sl'] < trade['entry']:
+                            new_sl = trade['entry']  # exact breakeven
                             if new_sl > trade['sl']:
                                 trade['sl'] = round(new_sl, 2)
-                        
-                        # Trail SL at 70% progress — lock in profits
+                                if _TG_AVAILABLE:
+                                    try:
+                                        notify_sl_moved_to_breakeven(trade['symbol'], trade['signal'], new_sl)
+                                    except Exception:
+                                        pass
+
+                        # STEP 2: Trail SL at 70% of TP progress — lock in profits
                         if current_profit >= tp_distance * 0.7:
                             atr_trail = trade.get('atr', tp_distance * 0.3)
                             new_sl = current_ltp - (atr_trail * 0.5)
@@ -129,16 +160,21 @@ class TradeManager:
                                 trade['sl'] = round(new_sl, 2)
 
                     elif trade['signal'] == 'SELL':
-                        tp_distance = trade['entry'] - trade['tp']
+                        tp_distance    = trade['entry'] - trade['tp']
                         current_profit = trade['entry'] - current_ltp
-                        
-                        # Move SL to breakeven at 50% of target
-                        if current_profit >= tp_distance * 0.5:
-                            new_sl = trade['entry'] - (tp_distance * 0.1)
+
+                        # STEP 1: Move SL to exact breakeven at 1:1 RR
+                        if current_profit >= tp_distance and trade['sl'] > trade['entry']:
+                            new_sl = trade['entry']  # exact breakeven
                             if new_sl < trade['sl']:
                                 trade['sl'] = round(new_sl, 2)
-                        
-                        # Trail SL at 70% progress
+                                if _TG_AVAILABLE:
+                                    try:
+                                        notify_sl_moved_to_breakeven(trade['symbol'], trade['signal'], new_sl)
+                                    except Exception:
+                                        pass
+
+                        # STEP 2: Trail SL at 70% of TP progress
                         if current_profit >= tp_distance * 0.7:
                             atr_trail = trade.get('atr', tp_distance * 0.3)
                             new_sl = current_ltp + (atr_trail * 0.5)
@@ -245,6 +281,22 @@ class TradeManager:
                     persistence_manager.update_trade_exit(trade["id"], exit_price, exit_time, net_pnl, update_data['result'])
                     persistence_manager.log_event("INFO", "TRADE_CLOSED", f"ID: {trade['id']} | Result: {update_data['result']} | PnL: {net_pnl:.2f}")
 
+                    # Telegram: notify on trade exit
+                    if _TG_AVAILABLE:
+                        try:
+                            notify_trade_exit(
+                                signal=trade['signal'],
+                                symbol=trade['symbol'],
+                                entry=trade['entry'],
+                                exit_price=exit_price,
+                                qty=trade['qty'],
+                                pnl=net_pnl,
+                                result=update_data['result'],
+                                is_paper=trade.get('is_paper', True),
+                            )
+                        except Exception:
+                            pass
+
                     # Remote Update
                     db_manager.update_trade(trade["id"], update_data)
                     db_manager.save_daily_pnl(net_pnl, charges, net_pnl > 0)
@@ -319,7 +371,23 @@ class TradeManager:
                 # FIX M-4: Update SQLite so trades don't reappear as OPEN after restart
                 persistence_manager.update_trade_exit(trade["id"], exit_price, exit_time, net_pnl, "SQUARE_OFF")
                 persistence_manager.log_event("INFO", "EMERGENCY_SQUARE_OFF", f"ID: {trade['id']} | PnL: {net_pnl:.2f}")
-                
+
+                # Telegram: notify squareoff
+                if _TG_AVAILABLE:
+                    try:
+                        notify_trade_exit(
+                            signal=trade['signal'],
+                            symbol=trade['symbol'],
+                            entry=trade['entry'],
+                            exit_price=exit_price,
+                            qty=trade['qty'],
+                            pnl=net_pnl,
+                            result="SQUARE_OFF",
+                            is_paper=trade.get('is_paper', True),
+                        )
+                    except Exception:
+                        pass
+
                 db_manager.update_trade(trade["id"], update_data)
                 db_manager.save_daily_pnl(net_pnl, charges, net_pnl > 0)
                 self._sync_analytics()

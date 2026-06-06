@@ -824,6 +824,7 @@ async def trading_loop():
         ws_manager.connect()
 
     symbols = ["NIFTY", "BANKNIFTY"]
+    gap_scan_done = False  # Reset on each trading_loop start (once per day)
     while trading_active:
         try:
             # Check if F&O trading is enabled in settings
@@ -846,6 +847,20 @@ async def trading_loop():
                     ltp_dict = ws_manager.ltp_data if ws_manager else {}
                     trade_manager.emergency_square_off(ltp_dict)
                     await asyncio.to_thread(broker.square_off_all)
+
+                    # Telegram: daily summary
+                    try:
+                        from backend.utils.telegram_notifier import notify_daily_summary
+                        notify_daily_summary(
+                            total_trades=trade_manager.total_trades,
+                            winning=trade_manager.winning_trades,
+                            losing=trade_manager.losing_trades,
+                            realized_pnl=trade_manager.realized_pnl,
+                            daily_loss_used=getattr(risk_manager, 'daily_loss', 0.0),
+                        )
+                    except Exception as e:
+                        print(f"[Telegram] Daily summary failed: {e}")
+
                 break  # FIX C-1: Always exit loop after 3:10 PM — no more iterations
             
             # Midnight Reset Check for continuous 24/7 VPS deployments
@@ -855,6 +870,76 @@ async def trading_loop():
                 print(f"[Reset] Date changed from {last_reset_date} to {today_date}. Resetting daily risk stats.")
                 risk_manager.reset_daily()
                 last_reset_date = today_date
+                gap_scan_done = False  # Allow gap scan again on new day
+
+            # ─────────────────────────────────────────────────────────────────────
+            # PRE-MARKET GAP SCAN  (9:00 – 9:14 IST, once per day)
+            # Detects gap-up/gap-down ≥1% from prev close via yfinance.
+            # Auto-adds qualifying stocks to Firestore watchlist.
+            # ─────────────────────────────────────────────────────────────────────
+            if now.hour == 9 and now.minute < 15 and not gap_scan_done:
+                gap_scan_done = True
+                print("[GapScan] Running pre-market gap scan...")
+                try:
+                    import yfinance as yf
+                    gap_symbols = list(SCREENER_UNIVERSE[:40])  # Top 40 liquid stocks
+                    tickers     = [f"{s}.NS" for s in gap_symbols]
+                    raw = await asyncio.to_thread(
+                        lambda: yf.download(tickers, period="2d", interval="1d",
+                                            progress=False, threads=True)
+                    )
+                    gap_ups, gap_downs = [], []
+                    if not raw.empty and "Close" in raw.columns:
+                        closes = raw["Close"]
+                        if len(closes) >= 2:
+                            prev_row = closes.iloc[-2]
+                            curr_row = closes.iloc[-1]
+                            for sym in gap_symbols:
+                                col = f"{sym}.NS"
+                                try:
+                                    prev = float(prev_row.get(col))
+                                    curr = float(curr_row.get(col))
+                                    if prev > 0 and str(prev) != 'nan' and str(curr) != 'nan':
+                                        gap_pct = ((curr - prev) / prev) * 100
+                                        entry = {"symbol": sym, "gap_pct": round(gap_pct, 2),
+                                                 "prev_close": prev, "current": curr}
+                                        if gap_pct >= 1.0:
+                                            gap_ups.append(entry)
+                                        elif gap_pct <= -1.0:
+                                            gap_downs.append(entry)
+                                except Exception:
+                                    pass
+
+                    # Sort by gap magnitude
+                    gap_ups.sort(key=lambda x: -x['gap_pct'])
+                    gap_downs.sort(key=lambda x: x['gap_pct'])
+
+                    # Auto-add to Firestore watchlist (top 5 each)
+                    for item in (gap_ups[:5] + gap_downs[:5]):
+                        try:
+                            direction = "BUY" if item['gap_pct'] > 0 else "SELL"
+                            db_manager.db.collection("watchlist").document(item['symbol']).set({
+                                "symbol": item['symbol'],
+                                "side":   direction,
+                                "gap_pct": item['gap_pct'],
+                                "source": "GAP_SCAN",
+                                "added_at": int(time.time() * 1000),
+                            }, merge=True)
+                        except Exception:
+                            pass
+
+                    # Telegram alert
+                    try:
+                        from backend.utils.telegram_notifier import notify_gap_scan_results
+                        notify_gap_scan_results(gap_ups[:5], gap_downs[:5])
+                    except Exception:
+                        pass
+
+                    total_gaps = len(gap_ups) + len(gap_downs)
+                    print(f"[GapScan] Done: {len(gap_ups)} gap-up, {len(gap_downs)} gap-down. "
+                          f"Added {min(total_gaps, 10)} stocks to watchlist.")
+                except Exception as e:
+                    print(f"[GapScan] Failed: {e}")
 
             # Candle Lock Check (Wait for new minute)
             if now.second > 55: await asyncio.sleep(5); continue

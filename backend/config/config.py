@@ -15,6 +15,10 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "supersecret")
     PAPER_TRADING = os.getenv("PAPER_TRADING", "True") == "True"
     
+    # Telegram Alerts (set in Railway environment variables)
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+
     # Trading
     RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.01))
     DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", 0.03))
