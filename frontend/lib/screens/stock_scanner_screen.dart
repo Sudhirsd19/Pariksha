@@ -980,150 +980,268 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   }
 
   void _executeTrade(BuildContext context, TradingProvider provider, String symbol, String side, double ltp) {
-    if (ltp <= 0) ltp = 100.0; // Fallback safe price if unavailable
+    if (ltp <= 0) ltp = 100.0;
     final double capitalLimit = (provider.systemSettings['capital_limit'] as num?)?.toDouble() ?? 10000.0;
     int maxQty = (capitalLimit / ltp).floor();
     if (maxQty <= 0) maxQty = 1;
 
-    int selectedQty = 1;
-    final TextEditingController qtyController = TextEditingController(text: "1");
+    // Default: start with MAX quantity (full capital utilization)
+    int selectedQty = maxQty;
+    final TextEditingController qtyController = TextEditingController(text: maxQty.toString());
+
+    final Color sideColor = side == 'BUY' ? Colors.greenAccent : Colors.redAccent;
+
+    // SL/TP values (2% SL, 4% TP — same as backend)
+    final double sl = side == 'BUY' ? ltp * 0.98 : ltp * 1.02;
+    final double tp = side == 'BUY' ? ltp * 1.04 : ltp * 0.96;
+    const double charges = 60.0;
 
     showDialog(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (context, setS) {
             final double totalValue = selectedQty * ltp;
             final bool isValid = selectedQty > 0 && selectedQty <= maxQty;
+            final double slLoss   = (selectedQty * (ltp - sl).abs()) + charges;
+            final double tpProfit = (selectedQty * (tp - ltp).abs()) - charges;
+
+            void setQtyPercent(double pct) {
+              final int q = ((capitalLimit * pct) / ltp).floor();
+              setS(() {
+                selectedQty = q < 1 ? 1 : (q > maxQty ? maxQty : q);
+                qtyController.text = selectedQty.toString();
+              });
+            }
 
             return BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+              filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
               child: AlertDialog(
-                backgroundColor: const Color(0xFF0F0F1A),
+                backgroundColor: const Color(0xFF0D0D1C),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(24),
-                  side: const BorderSide(color: Colors.white10),
+                  side: BorderSide(color: sideColor.withValues(alpha: 0.3), width: 1.2),
                 ),
-                title: Text(
-                  "CONFIRM ALGO EXECUTION",
-                  style: TextStyle(
-                    color: side == "BUY" ? Colors.greenAccent : Colors.redAccent,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 14,
-                    letterSpacing: 2,
-                  ),
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
+                contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "Are you sure you want to trigger a dynamic $side algo trade for $symbol in the NSE Cash Segment?",
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Price per Share:", style: TextStyle(color: Colors.white30, fontSize: 12)),
-                        Text("₹${ltp.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Capital Limit:", style: TextStyle(color: Colors.white30, fontSize: 12)),
-                        Text("₹${capitalLimit.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    const Text("Quantity (Shares):", style: TextStyle(color: Colors.white30, fontSize: 12)),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        IconButton(
-                          onPressed: selectedQty > 1
-                              ? () {
-                                  setState(() {
-                                    selectedQty--;
-                                    qtyController.text = selectedQty.toString();
-                                  });
-                                }
-                              : null,
-                          icon: const Icon(Icons.remove_circle_outline, color: Colors.white60),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: sideColor.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            side == 'BUY' ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                            color: sideColor, size: 18,
+                          ),
                         ),
-                        Expanded(
-                          child: TextField(
-                            controller: qtyController,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                            decoration: InputDecoration(
-                              contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                              enabledBorder: OutlineInputBorder(
-                                borderSide: const BorderSide(color: Colors.white12),
-                                borderRadius: BorderRadius.circular(12),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '$side  $symbol',
+                              style: TextStyle(color: sideColor, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1),
+                            ),
+                            Text(
+                              '₹${ltp.toStringAsFixed(2)} per share  •  NSE Cash',
+                              style: const TextStyle(color: Colors.white38, fontSize: 10),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Divider(color: Colors.white.withValues(alpha: 0.06)),
+                      const SizedBox(height: 12),
+
+                      // ── Capital info row ──────────────────────────────
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _infoCell('CAPITAL LIMIT', '₹${capitalLimit.toStringAsFixed(0)}', Colors.white60),
+                          _infoCell('MAX SHARES', '$maxQty', Colors.cyanAccent),
+                          _infoCell('PRICE', '₹${ltp.toStringAsFixed(2)}', Colors.white60),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+
+                      // ── Preset % buttons ──────────────────────────────
+                      const Text('CAPITAL ALLOCATION', style: TextStyle(color: Colors.white24, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _pctBtn('25%',  0.25, selectedQty, maxQty, capitalLimit, ltp, sideColor, setQtyPercent),
+                          const SizedBox(width: 8),
+                          _pctBtn('50%',  0.50, selectedQty, maxQty, capitalLimit, ltp, sideColor, setQtyPercent),
+                          const SizedBox(width: 8),
+                          _pctBtn('75%',  0.75, selectedQty, maxQty, capitalLimit, ltp, sideColor, setQtyPercent),
+                          const SizedBox(width: 8),
+                          _pctBtn('MAX', 1.00, selectedQty, maxQty, capitalLimit, ltp, sideColor, setQtyPercent),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ── Qty stepper ───────────────────────────────────
+                      const Text('QUANTITY (SHARES)', style: TextStyle(color: Colors.white24, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          GestureDetector(
+                            onTap: selectedQty > 1
+                                ? () => setS(() {
+                                      selectedQty--;
+                                      qtyController.text = selectedQty.toString();
+                                    })
+                                : null,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: side == "BUY" ? Colors.greenAccent : Colors.redAccent),
+                              child: Icon(Icons.remove_rounded,
+                                  color: selectedQty > 1 ? Colors.white70 : Colors.white12, size: 18),
+                            ),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: qtyController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 20),
+                              decoration: InputDecoration(
+                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                                enabledBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(color: sideColor.withValues(alpha: 0.6)),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onChanged: (val) {
+                                final parsed = int.tryParse(val) ?? 0;
+                                setS(() => selectedQty = parsed);
+                              },
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: selectedQty < maxQty
+                                ? () => setS(() {
+                                      selectedQty++;
+                                      qtyController.text = selectedQty.toString();
+                                    })
+                                : null,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(Icons.add_rounded,
+                                  color: selectedQty < maxQty ? Colors.white70 : Colors.white12, size: 18),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      if (selectedQty > maxQty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '⚠ Capital limit exceeded! Max: $maxQty shares',
+                          style: const TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+
+                      // ── Trade summary ─────────────────────────────────
+                      Divider(color: Colors.white.withValues(alpha: 0.06)),
+                      const SizedBox(height: 12),
+                      const Text('TRADE SUMMARY', style: TextStyle(color: Colors.white24, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _infoCell('TOTAL VALUE', '₹${totalValue.toStringAsFixed(0)}', Colors.white),
+                          _infoCell('CHARGES', '₹${charges.toStringAsFixed(0)}', Colors.white38),
+                          _infoCell('SL', '₹${sl.toStringAsFixed(2)}', Colors.redAccent),
+                          _infoCell('TARGET', '₹${tp.toStringAsFixed(2)}', Colors.greenAccent),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      // ── Risk/Reward summary ───────────────────────────
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.redAccent.withValues(alpha: 0.08),
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.2)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('MAX LOSS', style: TextStyle(color: Colors.redAccent, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                                  const SizedBox(height: 3),
+                                  Text('-₹${slLoss.toStringAsFixed(0)}', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+                                  Text('if SL hit (2%)', style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.5), fontSize: 9)),
+                                ],
                               ),
                             ),
-                            onChanged: (val) {
-                              final parsed = int.tryParse(val) ?? 0;
-                              setState(() {
-                                selectedQty = parsed;
-                              });
-                            },
                           ),
-                        ),
-                        IconButton(
-                          onPressed: selectedQty < maxQty
-                              ? () {
-                                  setState(() {
-                                    selectedQty++;
-                                    qtyController.text = selectedQty.toString();
-                                  });
-                                }
-                              : null,
-                          icon: const Icon(Icons.add_circle_outline, color: Colors.white60),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Estimated Value:", style: TextStyle(color: Colors.white30, fontSize: 12)),
-                        Text(
-                          "₹${totalValue.toStringAsFixed(2)}",
-                          style: TextStyle(
-                            color: isValid ? Colors.greenAccent : Colors.redAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.greenAccent.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.2)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('MAX PROFIT', style: TextStyle(color: Colors.greenAccent, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                                  const SizedBox(height: 3),
+                                  Text('+₹${tpProfit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+                                  Text('if TP hit (4%)', style: TextStyle(color: Colors.greenAccent.withValues(alpha: 0.5), fontSize: 9)),
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    if (selectedQty > maxQty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        "Exceeds Capital Limit! Max allowed is $maxQty shares.",
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                        ],
                       ),
+                      const SizedBox(height: 20),
                     ],
-                  ],
+                  ),
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: const Text("CANCEL", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold)),
+                    child: const Text('CANCEL', style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold)),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: side == "BUY" ? Colors.green : Colors.red,
+                      backgroundColor: side == 'BUY' ? const Color(0xFF1B6B3A) : const Color(0xFF6B1B1B),
+                      foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     ),
                     onPressed: isValid
                         ? () async {
@@ -1131,7 +1249,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                             await provider.executeStockTrade(symbol, side, selectedQty);
                           }
                         : null,
-                    child: const Text("EXECUTE", style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+                    child: Text(
+                      '$side  $selectedQty shares',
+                      style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1),
+                    ),
                   ),
                 ],
               ),
@@ -1139,6 +1260,47 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
           },
         );
       },
+    );
+  }
+
+  // Helper: small info cell for dialog
+  Widget _infoCell(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+        const SizedBox(height: 2),
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+      ],
+    );
+  }
+
+  // Helper: capital % preset button
+  Widget _pctBtn(String label, double pct, int currentQty, int maxQty, double capital, double ltp, Color color, void Function(double) onTap) {
+    final int q = ((capital * pct) / ltp).floor();
+    final int resolvedQty = q < 1 ? 1 : (q > maxQty ? maxQty : q);
+    final bool isSelected = currentQty == resolvedQty;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => onTap(pct),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? color.withValues(alpha: 0.18) : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? color.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Column(
+            children: [
+              Text(label, style: TextStyle(color: isSelected ? color : Colors.white38, fontWeight: FontWeight.w900, fontSize: 11)),
+              Text('$resolvedQty', style: TextStyle(color: isSelected ? color.withValues(alpha: 0.8) : Colors.white24, fontSize: 9)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

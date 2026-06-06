@@ -693,16 +693,25 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
     if side not in ["BUY", "SELL"]:
         return {"status": "error", "message": "Invalid transaction side"}
         
-    # Daily Trade Check: prevent trading the same stock symbol if it has already been traded and closed today
-    symbol_closed_trades = [
-        sig for sig in signals 
-        if (sig.get("symbol") == symbol or sig.get("symbol") == f"{symbol}-EQ") 
+    # Daily Trade Check: prevent trading the same stock if it has already been traded AND CLOSED today
+    # FIX: Must filter by TODAY's IST date — without this, yesterday's closed trades lock today's entries
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist_tz)
+    start_of_day_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
+
+    symbol_closed_today = [
+        sig for sig in signals
+        if (sig.get("symbol") == symbol or sig.get("symbol") == f"{symbol}-EQ")
         and sig.get("status") == "CLOSED"
+        and int(sig.get("timestamp", 0)) >= start_of_day_ms
     ]
-    if symbol_closed_trades:
+    if symbol_closed_today:
+        closed_time_ms = symbol_closed_today[-1].get("exit_time", 0)
+        closed_dt = datetime.fromtimestamp(closed_time_ms / 1000, tz=ist_tz).strftime("%H:%M") if closed_time_ms else "earlier today"
         return {
-            "status": "error", 
-            "message": f"Daily lock active for {symbol}. Only one trade per stock is allowed daily."
+            "status": "error",
+            "message": f"{symbol} aaj {closed_dt} pe already trade hua aur close ho gaya. Kal dobara try karo."
         }
         
     from backend.engines.stock_analyzer import stock_analyzer
