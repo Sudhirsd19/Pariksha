@@ -28,41 +28,65 @@ class _LogsScreenState extends State<LogsScreen> {
               surface: Color(0xFF0F0F1A),
               onSurface: Colors.white,
             ),
-            dialogTheme: const DialogThemeData(
-              backgroundColor: Color(0xFF0F0F1A),
-            ),
+            dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF0F0F1A)),
           ),
           child: child!,
         );
       },
     );
     if (picked != null && picked != _selectedDate) {
-      setState(() {
-        _selectedDate = picked;
-      });
+      setState(() => _selectedDate = picked);
     }
+  }
+
+  /// FIX: Date filter now checks BOTH entry timestamp AND exit_time.
+  /// Previously only checked entry time — so filtering by the close date
+  /// (e.g., trade entered yesterday, closed today) showed nothing.
+  bool _matchesDate(dynamic log, DateTime date) {
+    bool match(dynamic ts) {
+      if (ts == null) return false;
+      final ms = _parseTimestamp(ts);
+      if (ms == 0) return false;
+      final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+      return dt.year == date.year && dt.month == date.month && dt.day == date.day;
+    }
+    return match(log['timestamp']) || match(log['exit_time']);
+  }
+
+  /// Format millisecond timestamp → "DD/MM/YYYY  HH:MM"
+  String _formatDT(dynamic ts) {
+    if (ts == null) return '--';
+    final ms = _parseTimestamp(ts);
+    if (ms == 0) return '--';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    final d = dt.day.toString().padLeft(2, '0');
+    final mo = dt.month.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final mi = dt.minute.toString().padLeft(2, '0');
+    return '$d/$mo/${dt.year}  $h:$mi';
+  }
+
+  int _parseTimestamp(dynamic ts) {
+    if (ts == null) return 0;
+    if (ts is num) return ts.toInt();
+    return double.tryParse(ts.toString())?.toInt() ?? 0;
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TradingProvider>(context);
 
-    // Filter logs by selected date if set
+    // Filter logs by selected date (entry OR exit matches)
     final filteredLogs = provider.signals.where((log) {
       if (_selectedDate == null) return true;
-      final timestamp = log['timestamp'];
-      if (timestamp == null) return false;
-      final dt = DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(timestamp));
-      return dt.year == _selectedDate!.year &&
-             dt.month == _selectedDate!.month &&
-             dt.day == _selectedDate!.day;
+      return _matchesDate(log, _selectedDate!);
     }).toList();
 
-    // Sort: Latest closed or open trades at the top (using exit_time or entry timestamp)
+    // Sort: latest (by exit_time if closed, else entry time) first
     filteredLogs.sort((a, b) {
-      final aTime = a['exit_time'] ?? a['timestamp'] ?? 0;
-      final bTime = b['exit_time'] ?? b['timestamp'] ?? 0;
-      return _parseTimestamp(bTime).compareTo(_parseTimestamp(aTime));
+      final aT = _parseTimestamp(a['exit_time'] ?? a['timestamp'] ?? 0);
+      final bT = _parseTimestamp(b['exit_time'] ?? b['timestamp'] ?? 0);
+      return bT.compareTo(aT);
     });
 
     return Scaffold(
@@ -70,10 +94,10 @@ class _LogsScreenState extends State<LogsScreen> {
       body: Stack(
         children: [
           _buildMeshBackground(),
-          
           CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [
+              // ── AppBar ───────────────────────────────────────────────
               SliverAppBar(
                 expandedHeight: 120,
                 floating: true,
@@ -84,7 +108,10 @@ class _LogsScreenState extends State<LogsScreen> {
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                     child: FlexibleSpaceBar(
-                      title: const Text('MISSION LOGS', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 14)),
+                      title: const Text(
+                        'MISSION LOGS',
+                        style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 14),
+                      ),
                       background: Container(color: Colors.black.withValues(alpha: 0.3)),
                     ),
                   ),
@@ -92,28 +119,27 @@ class _LogsScreenState extends State<LogsScreen> {
                 actions: [
                   IconButton(
                     icon: Icon(
-                      Icons.calendar_today_rounded, 
+                      Icons.calendar_today_rounded,
                       color: _selectedDate != null ? Colors.cyanAccent : Colors.white60,
                     ),
+                    tooltip: 'Filter by Date',
                     onPressed: () => _selectDate(context),
                   ),
                   if (_selectedDate != null)
                     IconButton(
                       icon: const Icon(Icons.clear_rounded, color: Colors.redAccent),
-                      tooltip: "Clear Filter",
-                      onPressed: () {
-                        setState(() {
-                          _selectedDate = null;
-                        });
-                      },
+                      tooltip: 'Clear Filter',
+                      onPressed: () => setState(() => _selectedDate = null),
                     ),
                   IconButton(
                     icon: const Icon(Icons.sync_rounded, color: Colors.cyanAccent),
+                    tooltip: 'Sync',
                     onPressed: () => provider.fetchLogs(),
                   ),
                 ],
               ),
 
+              // ── Active filter chip ────────────────────────────────────
               if (_selectedDate != null)
                 SliverToBoxAdapter(
                   child: Padding(
@@ -130,10 +156,11 @@ class _LogsScreenState extends State<LogsScreen> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.date_range_rounded, color: Colors.cyanAccent, size: 14),
+                              const Icon(Icons.date_range_rounded, color: Colors.cyanAccent, size: 13),
                               const SizedBox(width: 8),
                               Text(
-                                "Date: ${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}",
+                                'Filter: ${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
+                                '  •  ${filteredLogs.length} trade${filteredLogs.length == 1 ? '' : 's'}',
                                 style: const TextStyle(
                                   color: Colors.cyanAccent,
                                   fontSize: 11,
@@ -148,23 +175,39 @@ class _LogsScreenState extends State<LogsScreen> {
                   ),
                 ),
 
+              // ── Log list ──────────────────────────────────────────────
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
                 sliver: filteredLogs.isEmpty
-                    ? const SliverFillRemaining(
+                    ? SliverFillRemaining(
                         child: Center(
-                          child: Text(
-                            'NO MISSION DATA DETECTED',
-                            style: TextStyle(color: Colors.white10, fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 10),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.search_off_rounded, color: Colors.white10, size: 48),
+                              const SizedBox(height: 16),
+                              Text(
+                                _selectedDate != null
+                                    ? 'NO TRADES ON\n'
+                                        '${_selectedDate!.day.toString().padLeft(2, '0')}/'
+                                        '${_selectedDate!.month.toString().padLeft(2, '0')}/'
+                                        '${_selectedDate!.year}'
+                                    : 'NO MISSION DATA DETECTED',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 4,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       )
                     : SliverList(
                         delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            final log = filteredLogs[index];
-                            return _buildCyberLogTile(log);
-                          },
+                          (context, index) => _buildLogTile(filteredLogs[index]),
                           childCount: filteredLogs.length,
                         ),
                       ),
@@ -176,132 +219,233 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
+  // ── Log Tile ─────────────────────────────────────────────────────────────
 
-  Widget _buildMeshBackground() {
-    return Stack(
-      children: [
-        Positioned(top: 100, right: -50, child: _buildOrb(300, Colors.redAccent.withValues(alpha: 0.05))),
-        Positioned(bottom: 200, left: -100, child: _buildOrb(400, Colors.cyanAccent.withValues(alpha: 0.05))),
-      ],
-    );
-  }
+  Widget _buildLogTile(dynamic log) {
+    final isBuy    = log['signal'] == 'BUY';
+    final isClosed = log['status'] == 'CLOSED';
+    final Color accentColor = isBuy ? Colors.greenAccent : Colors.redAccent;
+    final pnl      = (log['pnl'] ?? 0.0) as num;
+    final isProfit = pnl >= 0;
 
-  Widget _buildOrb(double size, Color color) {
     return Container(
-      width: size, height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 100, spreadRadius: 50)]),
-    );
-  }
-
-  Widget _buildCyberLogTile(dynamic log) {
-    final isBuy = log['signal'] == 'BUY';
-    final Color color = isBuy ? Colors.greenAccent : Colors.redAccent;
-    final bool isClosed = log['status'] == 'CLOSED';
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20),
+      margin: const EdgeInsets.only(bottom: 18),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: color.withValues(alpha: 0.1)),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: accentColor.withValues(alpha: 0.18)),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(22),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
           child: Container(
-            padding: const EdgeInsets.all(24),
-            color: color.withValues(alpha: 0.02),
-            child: Row(
+            color: accentColor.withValues(alpha: 0.025),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isBuy ? Icons.bolt_rounded : Icons.shield_rounded,
-                    color: color,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+
+                // ── Header: symbol / side / PnL ─────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${log['signal'] ?? 'SIGNAL'} - ${log['symbol'] ?? 'NIFTY'}',
-                              style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16, letterSpacing: 0.5),
+                      // Side icon circle
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: accentColor.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isBuy ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                          color: accentColor,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+
+                      // Symbol + tags
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              log['symbol'] ?? 'NIFTY',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                fontSize: 16,
+                                letterSpacing: 0.4,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          if (isClosed) ...[
-                            _buildResultBadge(log['result'] ?? 'CLOSED'),
-                            const SizedBox(width: 8),
-                          ],
-                          Text(
-                            log['timestamp'] != null 
-                              ? "${DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(log['timestamp'])).hour.toString().padLeft(2,'0')}:${DateTime.fromMillisecondsSinceEpoch(_parseTimestamp(log['timestamp'])).minute.toString().padLeft(2,'0')}"
-                              : 'NOW',
-                            style: const TextStyle(color: Colors.white60, fontSize: 9, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: isClosed
-                            ? [
-                                Expanded(child: _buildMiniBadge('ENTRY', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
-                                const SizedBox(width: 8),
-                                Expanded(child: _buildMiniBadge('EXIT', '₹${log['exit_price'] ?? '0.0'}', Colors.orangeAccent)),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: _buildMiniBadge(
-                                    'PNL', 
-                                    '${((log['pnl'] ?? 0.0) as num) >= 0 ? '+' : ''}₹${((log['pnl'] ?? 0.0) as num).toStringAsFixed(2)}', 
-                                    ((log['pnl'] ?? 0.0) as num) >= 0 ? Colors.greenAccent : Colors.redAccent
-                                  ),
-                                ),
-                              ]
-                            : [
-                                Expanded(child: _buildMiniBadge('PRICE', '₹${log['entry'] ?? '0.0'}', Colors.cyanAccent)),
-                                const SizedBox(width: 8),
-                                Expanded(child: _buildMiniBadge('SL', '${log['sl'] ?? '0.0'}', Colors.redAccent)),
-                                const SizedBox(width: 8),
-                                Expanded(child: _buildMiniBadge('TP', '${log['tp'] ?? '0.0'}', Colors.greenAccent)),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                _pill(log['signal'] ?? 'SIGNAL', accentColor),
+                                const SizedBox(width: 6),
+                                if (log['qty'] != null)
+                                  _pill('QTY ${log['qty']}', Colors.white38),
+                                if (log['instrument_type'] != null) ...[
+                                  const SizedBox(width: 6),
+                                  _pill(log['instrument_type'].toString(), Colors.purpleAccent),
+                                ],
                               ],
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.02),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.psychology_outlined, color: Colors.white24, size: 14),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                (log['reason'] ?? 'AI PROTOCOL EXECUTION').toString(),
-                                style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w500, height: 1.4),
-                              ),
                             ),
                           ],
                         ),
+                      ),
+
+                      // Right: result badge + PnL
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (isClosed) ...[
+                            _buildResultBadge(log['result'] ?? 'CLOSED'),
+                            const SizedBox(height: 5),
+                            Text(
+                              '${isProfit ? '+' : ''}₹${pnl.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                color: isProfit ? Colors.greenAccent : Colors.redAccent,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ] else
+                            _pill('● OPEN', Colors.cyanAccent),
+                        ],
                       ),
                     ],
                   ),
                 ),
+
+                // ── Thin divider ─────────────────────────────────────────
+                Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+
+                // ── Price row: Entry | Exit/SL | TP/Charges ─────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+                  child: Row(
+                    children: isClosed
+                        ? [
+                            Expanded(child: _badge('ENTRY', '₹${log['entry'] ?? '-'}', Colors.cyanAccent)),
+                            _vLine(),
+                            Expanded(child: _badge('EXIT', '₹${log['exit_price'] ?? '-'}', Colors.orangeAccent)),
+                            _vLine(),
+                            Expanded(child: _badge('CHARGES', '₹60', Colors.white38)),
+                          ]
+                        : [
+                            Expanded(child: _badge('ENTRY', '₹${log['entry'] ?? '-'}', Colors.cyanAccent)),
+                            _vLine(),
+                            Expanded(child: _badge('STOP LOSS', '${log['sl'] ?? '-'}', Colors.redAccent)),
+                            _vLine(),
+                            Expanded(child: _badge('TARGET', '${log['tp'] ?? '-'}', Colors.greenAccent)),
+                          ],
+                  ),
+                ),
+
+                // ── Thin divider ─────────────────────────────────────────
+                Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+
+                // ── Date/Time row ─────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  child: Row(
+                    children: [
+                      // Entry date + time
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.login_rounded, color: Colors.white24, size: 13),
+                            const SizedBox(width: 6),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'ENTRY',
+                                  style: TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatDT(log['timestamp']),
+                                  style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Closed date + time (only for closed trades)
+                      if (isClosed)
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.logout_rounded, color: Colors.white24, size: 13),
+                              const SizedBox(width: 6),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'CLOSED',
+                                    style: TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _formatDT(log['exit_time']),
+                                    style: TextStyle(
+                                      color: log['result'] == 'TARGET'
+                                          ? Colors.greenAccent.withValues(alpha: 0.85)
+                                          : log['result'] == 'STOPLOSS'
+                                              ? Colors.redAccent.withValues(alpha: 0.85)
+                                              : Colors.white60,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ── AI Reason (collapsible if too long) ───────────────────
+                if (log['reason'] != null && log['reason'].toString().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(11),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.025),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.psychology_outlined, color: Colors.white24, size: 12),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              log['reason'].toString(),
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -310,48 +454,83 @@ class _LogsScreenState extends State<LogsScreen> {
     );
   }
 
-  Widget _buildResultBadge(String result) {
-    Color badgeColor;
-    if (result == 'TARGET') {
-      badgeColor = Colors.greenAccent;
-    } else if (result == 'STOPLOSS') {
-      badgeColor = Colors.redAccent;
-    } else {
-      badgeColor = Colors.white54;
-    }
+  // ── Helper widgets ────────────────────────────────────────────────────────
+
+  Widget _pill(String text, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: badgeColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: badgeColor.withValues(alpha: 0.2)),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        result,
-        style: TextStyle(
-          color: badgeColor,
-          fontSize: 8,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0.5,
-        ),
+        text,
+        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
       ),
     );
   }
 
-  Widget _buildMiniBadge(String label, String value, Color color) {
+  Widget _vLine() {
+    return Container(
+      width: 1,
+      height: 28,
+      color: Colors.white.withValues(alpha: 0.06),
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+    );
+  }
+
+  Widget _badge(String label, String value, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white10, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
-        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(color: Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+        const SizedBox(height: 3),
         Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
       ],
     );
   }
 
-  int _parseTimestamp(dynamic ts) {
-    if (ts == null) return 0;
-    if (ts is num) return ts.toInt();
-    return double.tryParse(ts.toString())?.toInt() ?? 0;
+  Widget _buildResultBadge(String result) {
+    final Color c;
+    final String label;
+    switch (result) {
+      case 'TARGET':
+        c = Colors.greenAccent; label = '🎯 TARGET'; break;
+      case 'STOPLOSS':
+        c = Colors.redAccent;   label = '🛡 STOPLOSS'; break;
+      case 'SQUARE_OFF':
+        c = Colors.orangeAccent; label = '⚡ SQ.OFF'; break;
+      default:
+        c = Colors.white54;     label = result;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: c, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+      ),
+    );
   }
+
+  Widget _buildMeshBackground() {
+    return Stack(
+      children: [
+        Positioned(top: 100, right: -50,   child: _orb(300, Colors.redAccent.withValues(alpha: 0.05))),
+        Positioned(bottom: 200, left: -100, child: _orb(400, Colors.cyanAccent.withValues(alpha: 0.05))),
+      ],
+    );
+  }
+
+  Widget _orb(double size, Color color) => Container(
+    width: size, height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      boxShadow: [BoxShadow(color: color, blurRadius: 100, spreadRadius: 50)],
+    ),
+  );
 }
