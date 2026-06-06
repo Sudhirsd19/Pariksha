@@ -1423,6 +1423,7 @@ class _SmartScreenerCard extends StatefulWidget {
 
 class _SmartScreenerCardState extends State<_SmartScreenerCard> {
   double _selectedPrice = 500;
+  int _selectedScore  = 70;  // min_score filter
   bool _isScanning = false;
   List<Map<String, dynamic>> _results = [];
   int _scanned = 0;
@@ -1430,6 +1431,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
   String? _error;
 
   final List<double> _priceLimits = [200, 500, 1000, 1500, 3000];
+  final List<int>    _scoreLimits = [70, 80, 90, 100];
 
   Future<void> _runScan() async {
     setState(() {
@@ -1440,7 +1442,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
     });
     try {
       final provider = Provider.of<TradingProvider>(context, listen: false);
-      final res = await provider.smartScreener(_selectedPrice);
+      final res = await provider.smartScreener(_selectedPrice, minScore: _selectedScore);
       if (res != null && res['status'] == 'success') {
         setState(() {
           _results = List<Map<String, dynamic>>.from(
@@ -1450,7 +1452,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
           _hasScanned = true;
         });
       } else {
-        setState(() => _error = "Scan failed. Try again.");
+        setState(() => _error = "Scan failed. Backend offline ya market band hai.");
       }
     } catch (e) {
       setState(() => _error = "Error: $e");
@@ -1491,10 +1493,10 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                 child: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent, size: 18),
               ),
               const SizedBox(width: 12),
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  const Text(
                     "SMART SCREENER",
                     style: TextStyle(
                       color: Colors.white,
@@ -1504,8 +1506,8 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     ),
                   ),
                   Text(
-                    "100% score stocks within budget",
-                    style: TextStyle(color: Colors.white38, fontSize: 10),
+                    "Score ≥$_selectedScore  •  Price < ₹${_selectedPrice.toInt()}",
+                    style: const TextStyle(color: Colors.white38, fontSize: 10),
                   ),
                 ],
               ),
@@ -1557,7 +1559,55 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
           ),
           const SizedBox(height: 18),
 
-          // SCAN Button
+          // MIN SCORE Label
+          const Text(
+            "MIN SCORE",
+            style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2),
+          ),
+          const SizedBox(height: 10),
+
+          // Score Filter Chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _scoreLimits.map((score) {
+              final selected = _selectedScore == score;
+              final Color scoreColor = score >= 90
+                  ? Colors.greenAccent
+                  : score >= 80
+                      ? Colors.cyanAccent
+                      : Colors.deepPurpleAccent;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedScore = score),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? scoreColor.withValues(alpha: 0.18)
+                        : Colors.white.withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: selected
+                          ? scoreColor.withValues(alpha: 0.6)
+                          : Colors.white.withValues(alpha: 0.07),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    score == 100 ? "100 only" : "≥ $score",
+                    style: TextStyle(
+                      color: selected ? scoreColor : Colors.white54,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 18),
+
           GestureDetector(
             onTap: _isScanning ? null : _runScan,
             child: AnimatedContainer(
@@ -1636,11 +1686,13 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     const Icon(Icons.search_off_rounded, color: Colors.white24, size: 32),
                     const SizedBox(height: 8),
                     Text(
-                      "No 100% score stocks under ₹${_selectedPrice.toInt()}",
+                      "Score ≥$_selectedScore stock nahi mila under ₹${_selectedPrice.toInt()}",
+                      textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white38, fontSize: 12),
                     ),
+                    const SizedBox(height: 4),
                     const Text(
-                      "Try a higher price limit",
+                      "Score filter kam karo ya price limit badhao",
                       style: TextStyle(color: Colors.white24, fontSize: 10),
                     ),
                   ],
@@ -1653,7 +1705,14 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                   final double ltp = (stock['ltp'] as num?)?.toDouble() ?? 0;
                   final int score = (stock['score'] as num?)?.toInt() ?? 0;
                   final String trend = stock['htf_trend'] ?? '';
-                  final String zone = stock['value_zone'] ?? '';
+                  final String zone    = stock['value_zone']?.toString() ?? '';
+                  final String signal  = stock['signal'] ?? 'BUY';
+                  final bool isBuySignal = signal == 'BUY';
+                  final Color tileColor  = isBuySignal ? Colors.greenAccent : Colors.redAccent;
+
+                  // Score color
+                  final Color scoreColor = score >= 90 ? Colors.greenAccent
+                      : score >= 80 ? Colors.cyanAccent : Colors.deepPurpleAccent;
 
                   // Find if this stock has an active trade open today
                   final now = DateTime.now();
@@ -1672,24 +1731,28 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                   final bool hasActive = activeTrade != null;
                   final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
-                  // Daily lock check: prevent trading the same stock if it was already traded today
-                  final closedTrades = provider.signals.where(
+                  // FIX HIGH-08: Daily lock must check TODAY's date only
+                  final closedTodayTrades = provider.signals.where(
                     (sig) {
                       final String sigSym = sig['symbol'] ?? '';
                       final isMatch = sigSym == "$symbol-EQ" || sigSym == symbol;
                       final isClosed = sig['status'] == "CLOSED";
-                      return isMatch && isClosed;
+                      final int ts = sig['timestamp'] is num 
+                          ? (sig['timestamp'] as num).toInt()
+                          : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+                      final isToday = ts >= todayStart;
+                      return isMatch && isClosed && isToday;
                     }
                   ).toList();
-                  final bool isLockedToday = closedTrades.isNotEmpty;
+                  final bool isLockedToday = closedTodayTrades.isNotEmpty;
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12),
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.greenAccent.withValues(alpha: 0.04),
+                      color: tileColor.withValues(alpha: 0.04),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.15), width: 1),
+                      border: Border.all(color: tileColor.withValues(alpha: 0.15), width: 1),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1700,26 +1763,45 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                               width: 36,
                               height: 36,
                               decoration: BoxDecoration(
-                                color: Colors.greenAccent.withValues(alpha: 0.1),
+                                color: tileColor.withValues(alpha: 0.1),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.stars_rounded, color: Colors.greenAccent, size: 18),
+                              child: Icon(
+                                isBuySignal ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                                color: tileColor, size: 18,
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    symbol,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 14,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        symbol,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: tileColor.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          signal,
+                                          style: TextStyle(color: tileColor, fontSize: 9, fontWeight: FontWeight.w900),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   Text(
-                                    "$trend  •  $zone",
+                                    "$trend  •  ${zone.isNotEmpty ? zone : 'In Range'}",
                                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                                   ),
                                 ],
@@ -1739,13 +1821,13 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
-                                    color: Colors.greenAccent.withValues(alpha: 0.15),
+                                    color: scoreColor.withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
                                     "$score%",
-                                    style: const TextStyle(
-                                      color: Colors.greenAccent,
+                                    style: TextStyle(
+                                      color: scoreColor,
                                       fontWeight: FontWeight.w900,
                                       fontSize: 11,
                                     ),

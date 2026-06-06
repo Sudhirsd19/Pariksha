@@ -528,44 +528,46 @@ async def search_stocks(q: str = ""):
     results.sort(key=lambda x: (not x["name"].startswith(query), len(x["name"])))
     return results[:30]
 
-# Top ~250 liquid NSE stocks for smart screener (F&O + NIFTY 500 core)
+# Top liquid NSE F&O + NIFTY 500 stocks for smart screener
+# Cleaned: removed delisted (GRUH), merged (MINDTREE→LTIM), invalid symbols (FIVE STAR, ROYALENFIELD, HEXAWARE, METAHEALTH)
 SCREENER_UNIVERSE = [
+    # --- NIFTY 50 CORE ---
     "RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK","SBIN","BHARTIARTL","WIPRO","TATASTEEL",
     "ADANIPORTS","LT","AXISBANK","KOTAKBANK","BAJFINANCE","HCLTECH","SUNPHARMA","ONGC",
     "MARUTI","NTPC","POWERGRID","COALINDIA","TITAN","BAJAJFINSV","M&M","NESTLEIND",
     "TECHM","ULTRACEMCO","ASIANPAINT","JSWSTEEL","HINDALCO","GRASIM","DRREDDY","DIVISLAB",
     "HDFCLIFE","SBILIFE","CIPLA","EICHERMOT","APOLLOHOSP","TATACONSUM","BRITANNIA",
-    "INDUSINDBK","HEROMOTOCO","BPCL","SHREECEM","PIIND","GLAND","MUTHOOTFIN","BANKBARODA",
-    "PNB","CANBK","FEDERALBNK","IDFCFIRSTB","RBLBANK","BANDHANBNK","AUBANK","INDIGO",
-    "INTERGLOBE","SPICEJET","IRCTC","ZOMATO","NYKAA","PAYTM","POLICYBZR","CARTRADE",
-    "DELHIVERY","MAPMYINDIA","HAL","BEL","BHEL","SAIL","NMDC","GAIL","IGL","MGL",
-    "PETRONET","IOC","HPCL","HINDPETRO","MRPL","CPCL","CHENNPETRO","APLAPOLLO",
-    "HINDZINC","NATIONALUM","WELCORP","RATNAMANI","MAHINDCIE","TATAELXSI","MPHASIS",
-    "LTTS","PERSISTENT","COFORGE","HAPPSTMNDS","MINDTREE","OFSS","NIITTECH","KPITTECH",
-    "CYIENT","MASTEK","ZENSAR","HEXAWARE","RAMSARUP","HAVELLS","VOLTAS","CROMPTON",
-    "POLYCAB","KEI","FINCABLES","KTKBANK","SOUTHBANK","DCBBANK","UJJIVANSFB","ESAFSFB",
-    "EQUITASBNK","SURYODAY","REPCO","MANAPPURAM","CHOLAFIN","SHRIRAMFIN","BAJAJHFL",
-    "LICHSGFIN","PNBHOUSING","CANFINHOME","GRUH","AAVAS","HOMEFIRST","APTUS","FIVE STAR",
-    "CREDITACC","ARMANFIN","SBFC","MOTILALOFS","ANGELONE","5PAISA","ICICIGI","NIACL",
-    "STARHEALTH","GODIGIT","GICRE","ORIENTINS","NEWGEN","ROUTES","CAMPUS","METAHEALTH",
-    "TATAMOTORS","M&MFIN","ASHOKLEY","ESCORTS","TIINDIA","MOTHERSON","BALKRISIND",
-    "MRF","APOLLOTYRE","CEATLTD","GOODYEAR","JKTYRE","TVSMOTORS","BAJAJ-AUTO","ROYALENFIELD",
-    "FORCE","SUNDRMFAST","BOSCHLTD","WABCOINDIA","ENDURANCE","SUPRAJIT","GABRIEL",
-    "SHARDACROP","ASTRAL","SUPRIYA","ALKYLAMINE","DEEPAKNITR","GNFC","GSFC","FACT",
-    "COROMANDEL","RALLIS","PI","DHANUKA","INSECTICID","ASTERDM","METROPOLIS","THYROCARE",
-    "KRSNAA","VIJAYABANK","LATENTVIEW","ROUTE","AWFIS","YATRA","EASEMYTRIP","THOMAS",
-    "LAXMIMACH","HEG","GRAPHITE","INOXWIND","SUZLON","GREENKO","RENEW","TORNTPOWER",
-    "ADANIGREEN","TATAPOWER","CESC","KSKPOWER","RPOWER","ORIENTELEC","JPPOWER","NHPC",
-    "SJVN","IRPOWER","NPTC","INOXGFL","CLEAN","GREENPANEL","CENTURY","WPIL","GODREJCP",
-    "DABUR","MARICO","EMAMILTD","COLPAL","GILLETTE","PG","JYOTHYLAB","VBL","RADICO",
-    "GLOBUSSPR","ABCAPITAL","EDELWEISS","IFCI","PFC","REC","IRFC","HUDCO","NABFID"
+    "INDUSINDBK","HEROMOTOCO","BPCL","TRENT","SHREECEM","TATAMOTORS",
+    # --- BANKING & FINANCE ---
+    "INDIGO","IRCTC","ZOMATO","NYKAA","PAYTM",
+    "PNB","CANBK","FEDERALBNK","IDFCFIRSTB","BANDHANBNK","AUBANK",
+    "BANKBARODA","MUTHOOTFIN","CHOLAFIN","SHRIRAMFIN","MANAPPURAM",
+    "LICHSGFIN","PNBHOUSING","CANFINHOME","ANGELONE","MOTILALOFS",
+    # --- IT ---
+    "LTIM","OFSS","MPHASIS","LTTS","PERSISTENT","COFORGE","KPITTECH","CYIENT",
+    # --- INFRA & DEFENCE ---
+    "HAL","BEL","BHEL","SAIL","NMDC","GAIL","IGL","MGL","PETRONET","IOC","HPCL",
+    # --- AUTO ---
+    "BAJAJ-AUTO","TVSMOTORS","ASHOKLEY","ESCORTS","MOTHERSON","BALKRISIND",
+    "MRF","APOLLOTYRE","BOSCHLTD","SUNDRMFAST",
+    # --- POWER & ENERGY ---
+    "TATAPOWER","ADANIGREEN","TORNTPOWER","CESC","NHPC","SJVN","SUZLON",
+    # --- CONSUMER ---
+    "DABUR","MARICO","EMAMILTD","COLPAL","JYOTHYLAB","VBL","RADICO","HAVELLS",
+    "VOLTAS","CROMPTON","POLYCAB","GODREJCP","PIIND",
+    # --- PHARMA & HEALTH ---
+    "METROPOLIS","THYROCARE","ASTERDM",
+    # --- CHEMICALS ---
+    "DEEPAKNITR","GNFC","COROMANDEL","RALLIS","ASTRAL",
 ]
 
+
 @app.get("/smart-screener")
-async def smart_screener(max_price: float = 500.0):
+async def smart_screener(max_price: float = 500.0, min_score: int = 70):
     """
     Bulk screen NSE stocks: fetch prices via yfinance, filter by max_price,
-    run full analysis in parallel, return only score=100 stocks.
+    run full analysis sequentially, return stocks with score >= min_score (default 70).
+    Score 70+ = strong setup. Score 90+ = very high conviction.
     """
     import yfinance as yf
     from backend.engines.stock_analyzer import stock_analyzer
@@ -579,69 +581,78 @@ async def smart_screener(max_price: float = 500.0):
 
     api_client = broker.smart_api if broker.session else None
 
-    # Step 1: Bulk price fetch
+    # Step 1: Bulk price fetch via yfinance (much faster than Angel One for price-only)
     tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
+    price_map = {}
     try:
         raw = await asyncio.to_thread(
-            lambda: yf.download(tickers, period="1d", interval="1d", progress=False, threads=True)
+            lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=True)
         )
-        # raw["Close"] is a DataFrame with columns = ticker symbols
-        close_row = raw["Close"].iloc[-1] if not raw.empty else {}
-        price_map = {}
-        for sym in SCREENER_UNIVERSE:
-            col = f"{sym}.NS"
-            val = close_row.get(col)
-            if val is not None and not (hasattr(val, '__float__') and val != val):  # nan check
+        if not raw.empty and "Close" in raw.columns:
+            close_row = raw["Close"].iloc[-1]
+            for sym in SCREENER_UNIVERSE:
+                col = f"{sym}.NS"
                 try:
-                    price_map[sym] = float(val)
+                    val = close_row.get(col)
+                    if val is not None and str(val) != 'nan':
+                        price_map[sym] = float(val)
                 except Exception:
                     pass
     except Exception as e:
-        print(f"[SmartScreener] Bulk price fetch failed: {e}")
-        price_map = {}
+        print(f"[SmartScreener] Bulk price fetch failed: {e}. Proceeding without price filter.")
 
-    # Step 2: Filter by price
-    affordable = [s for s in SCREENER_UNIVERSE if price_map.get(s, 9999) <= max_price]
+    # Step 2: Filter by price (if price_map empty, scan all to avoid empty results)
+    if price_map:
+        affordable = [s for s in SCREENER_UNIVERSE if price_map.get(s, 9999) <= max_price]
+    else:
+        affordable = list(SCREENER_UNIVERSE)  # No prices fetched — scan all anyway
+
     if not affordable:
-        return {"status": "success", "results": [], "scanned": 0, "affordable": 0}
+        return {"status": "success", "results": [], "scanned": 0, "affordable": 0,
+                "message": f"No stocks found under ₹{max_price:.0f}"}
 
-    # Step 3: Run full analysis sequentially with throttling to avoid AngelOne rate limit (3 req/sec)
+    # Step 3: Run full analysis sequentially (throttled for AngelOne 3 req/sec)
     async def analyze_one(sym):
         try:
             res = await stock_analyzer.analyze_stock(sym, api_client)
             if res and res.get("status") == "success":
                 return res
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SmartScreener] {sym} analysis error: {e}")
         return None
 
     results_raw = []
-    for sym in affordable[:20]:  # cap at 20
+    cap = min(len(affordable), 25)  # Scan up to 25 affordable stocks
+    for sym in affordable[:cap]:
         res = await analyze_one(sym)
-        results_raw.append(res)
+        if res:
+            results_raw.append(res)
         if api_client:
-            # Each stock analysis makes 2 API calls, so sleep 0.75s to stay well below 3 req/sec limit
-            await asyncio.sleep(0.75)
+            await asyncio.sleep(0.75)  # stay below 3 req/sec
 
-    # Step 4: Filter score == 100
+    # Step 4: Filter by score >= min_score (default 70 — strong intraday setup)
+    # Changed from ==100 which was too strict and returned 0 results most days
     top_picks = [
         {
             "symbol": r["symbol"],
-            "ltp": r["ltp"],
-            "score": r["score"],
-            "htf_trend": r["htf_trend"],
-            "value_zone": r["value_zone"],
+            "ltp": round(r.get("ltp", 0), 2),
+            "score": r.get("score", 0),
+            "htf_trend": r.get("htf_trend", "NEUTRAL"),
+            "value_zone": r.get("value_zone", False),
+            "signal": "BUY" if r.get("htf_trend") == "Bullish" else "SELL",
+            "reason": r.get("reason", ""),
         }
-        for r in results_raw if r and r.get("score", 0) == 100
+        for r in results_raw if r and r.get("score", 0) >= min_score
     ]
-    # Sort by price ascending
-    top_picks.sort(key=lambda x: x["ltp"])
+    # Sort: highest score first, then lowest price
+    top_picks.sort(key=lambda x: (-x["score"], x["ltp"]))
 
     return {
         "status": "success",
-        "results": top_picks,
-        "scanned": len(affordable),
+        "results": top_picks[:15],  # Return top 15 picks
+        "scanned": len(results_raw),
         "affordable": len(affordable),
+        "min_score_used": min_score,
     }
 
 @app.get("/analyze-stock")
