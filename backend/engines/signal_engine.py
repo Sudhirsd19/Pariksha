@@ -66,7 +66,9 @@ class SignalEngine:
 
     def evaluate(self, htf_df, mtf_df, structure_data, daily_data, session_info):
         """Evaluate full confluence with advanced filters."""
-        now = datetime.datetime.now().time()
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.datetime.now(ist_tz).time()
         in_killzone = self.check_killzone(now)
         htf_trend = self.get_htf_trend(htf_df)
         

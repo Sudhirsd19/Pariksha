@@ -31,7 +31,9 @@ class RiskManager:
     def is_news_window(self):
         """Check if we are currently in a high-impact news window."""
         import datetime
-        now = datetime.datetime.now()
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.datetime.now(ist_tz).replace(tzinfo=None)
         for event_str in self.news_events:
             event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
             diff = abs((now - event_time).total_seconds() / 60)
@@ -41,7 +43,9 @@ class RiskManager:
 
     def is_restricted_time_window(self):
         import datetime
-        now = datetime.datetime.now()
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.datetime.now(ist_tz)
         # Block 9:15 to 9:30 AM
         if now.hour == 9 and 15 <= now.minute < 30:
             return True

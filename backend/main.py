@@ -83,7 +83,7 @@ current_ltp = 0.0
 last_broadcast_ltp = 0.0 
 last_execution_candle = { "NIFTY": None, "BANKNIFTY": None }
 last_checked_candle = { "NIFTY": None, "BANKNIFTY": None }
-last_reset_date = datetime.now().date()
+last_reset_date = config.get_ist_time().date()
 ws_manager = None
 
 # --- CORE COMPONENTS ---
@@ -243,7 +243,7 @@ async def ltp_broadcaster():
                 
                 # FIX 1: Include sentiment, killzone & score in WS payload
                 # Frontend trading_provider.dart reads these from WebSocket
-                now_time = datetime.now().time()
+                now_time = config.get_ist_time().time()
                 ws_sentiment = "Neutral"
                 ws_sentiment_score = 0.5
                 if signals:
@@ -317,7 +317,7 @@ async def get_status():
         sentiment_score = 0.8 if sentiment == "Bullish" else 0.2
 
     can_trade, lock_reason = risk_manager.check_hard_locks() if hasattr(risk_manager, 'check_hard_locks') else (True, None)
-    now = datetime.now().time()
+    now = config.get_ist_time().time()
     in_killzone = signal_engine.check_killzone(now) if hasattr(signal_engine, 'check_killzone') else True
 
     return {
@@ -804,12 +804,12 @@ async def trading_loop():
                 await asyncio.sleep(5)
                 continue
 
-            now = datetime.now()
+            now = config.get_ist_time()
             
             # --- AUTO-SQUAREOFF ---
-            # 3:15 PM forced square-off to avoid broker penalties
-            if now.hour == 15 and now.minute >= 15:
-                print("[Auto-Squareoff] 3:15 PM reached. Squaring off all positions.")
+            # 3:10 PM forced square-off to beat the broker's 3:15 PM auto-square-off penalty (approx ₹60)
+            if now.hour == 15 and now.minute >= 10:
+                print("[Auto-Squareoff] 3:10 PM reached. Squaring off all positions.")
                 await square_off()
                 trading_active = False # Stop trading for the day
                 await asyncio.to_thread(sync_status_to_db)

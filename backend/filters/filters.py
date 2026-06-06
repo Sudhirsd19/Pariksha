@@ -11,7 +11,9 @@ class SessionFilter:
         if config.PAPER_TRADING:
             return True
         
-        now = datetime.now().time()
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist_tz).time()
         
         # Morning Session: 9:20 AM to 11:30 AM
         s1_start = time(9, 20)

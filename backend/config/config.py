@@ -28,4 +28,9 @@ class Config:
     SESSION_2_START = "09:15" # redundant but safe
     SESSION_2_END = "15:25"
 
+    @staticmethod
+    def get_ist_time():
+        from datetime import datetime, timezone, timedelta
+        return datetime.now(timezone(timedelta(hours=5, minutes=30)))
+
 config = Config()

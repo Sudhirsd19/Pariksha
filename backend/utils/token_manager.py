@@ -82,7 +82,9 @@ class TokenManager:
 
     def resolve_active_futures(self, data):
         """Finds nearest active futures contract for NIFTY and BANKNIFTY from Scrip Master data."""
-        today = datetime.now().date()
+        from datetime import timezone, timedelta
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        today = datetime.now(ist_tz).date()
         nifty_futs = []
         banknifty_futs = []
         
@@ -161,7 +163,9 @@ class TokenManager:
             for target in ["NIFTY", "BANKNIFTY"]:
                 self.options_index[target] = {"CE": {}, "PE": {}}
                 
-            today = datetime.now().date()
+            from datetime import timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            today = datetime.now(ist_tz).date()
             count = 0
             
             for item in data:
