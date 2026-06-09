@@ -229,7 +229,7 @@ class TokenManager:
         except Exception as e:
             print(f"[TokenManager] Error building options index: {e}")
 
-    def get_atm_option(self, symbol, index_ltp, option_type):
+    def get_atm_option(self, symbol, index_ltp, option_type, force_next_weekly=False):
         """
         Fetch nearest weekly expiry ATM Option contract details.
         option_type: CE or PE
@@ -251,6 +251,14 @@ class TokenManager:
         try:
             contracts = self.options_index.get(symbol, {}).get(option_type, {}).get(strike, [])
             if contracts:
+                # Get current date in IST
+                from datetime import timezone, timedelta
+                ist_tz = timezone(timedelta(hours=5, minutes=30))
+                today = datetime.now(ist_tz).date()
+                
+                # Check if the nearest contract expires today. If so, return next week's contract (index 1) to avoid theta decay.
+                if len(contracts) > 1 and (contracts[0]["expiry"] == today or force_next_weekly):
+                    return contracts[1]
                 return contracts[0]  # Nearest expiry is first
         except Exception as e:
             print(f"[TokenManager] Error looking up ATM Option for {symbol}: {e}")

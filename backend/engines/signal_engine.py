@@ -64,7 +64,40 @@ class SignalEngine:
         last_close = htf_df['close'].iloc[-1]
         return "BULLISH" if last_close > ema50 else "BEARISH"
 
-    def evaluate(self, htf_df, mtf_df, structure_data, daily_data, session_info):
+    def calculate_adx(self, df, period=14):
+        """Calculate Average Directional Index (ADX) to determine trend strength."""
+        try:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            tr = pd.concat([
+                high - low,
+                (high - close.shift()).abs(),
+                (low - close.shift()).abs()
+            ], axis=1).max(axis=1)
+            
+            up_move = high - high.shift()
+            down_move = low.shift() - low
+            
+            plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+            minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+            
+            tr_smooth = tr.rolling(period).mean()
+            plus_di = 100 * (plus_dm.rolling(period).mean() / tr_smooth)
+            minus_di = 100 * (minus_dm.rolling(period).mean() / tr_smooth)
+            
+            dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+            adx = dx.rolling(period).mean()
+            
+            val = adx.iloc[-1]
+            if pd.isna(val):
+                return 25.0
+            return float(val)
+        except Exception:
+            return 25.0
+
+    def evaluate(self, htf_df, mtf_df, structure_data, daily_data, session_info, symbol="NIFTY"):
         """Evaluate full confluence with advanced filters."""
         from datetime import timezone, timedelta
         ist_tz = timezone(timedelta(hours=5, minutes=30))
@@ -108,13 +141,58 @@ class SignalEngine:
         # FVG/Imbalance Check
         if structure_data.get('fvg_gap', False): score += 1
         
+        # 1. ADX Trend Strength Check
+        adx_val = self.calculate_adx(mtf_df)
+        adx_ok = adx_val >= 20
+        if adx_ok:
+            score += 2
+        else:
+            score -= 2 # Deduct points for rangebound chop
+            
+        # 2. PCR Supportive Check
+        from backend.engines.oi_engine import oi_engine
+        oi_supportive = True
+        if bias == "BULLISH":
+            oi_supportive = oi_engine.is_oi_supportive(symbol, "BUY")
+        elif bias == "BEARISH":
+            oi_supportive = oi_engine.is_oi_supportive(symbol, "SELL")
+
+        # 3. 15-Min ORB Filter
+        orb_passed = True
+        try:
+            today_str = datetime.datetime.now(ist_tz).strftime("%Y-%m-%d")
+            # Look for 15M candles starting today
+            today_candles = mtf_df[mtf_df['time'].str.startswith(today_str)] if 'time' in mtf_df.columns else pd.DataFrame()
+            if not today_candles.empty:
+                first_candle = today_candles.iloc[0]
+                orb_high = first_candle['high']
+                orb_low = first_candle['low']
+                
+                if bias == "BULLISH" and last_close <= orb_high:
+                    orb_passed = False
+                elif bias == "BEARISH" and last_close >= orb_low:
+                    orb_passed = False
+            else:
+                # Mock fallback
+                first_candle = mtf_df.iloc[0]
+                orb_high = first_candle['high']
+                orb_low = first_candle['low']
+                if bias == "BULLISH" and last_close <= orb_high:
+                    orb_passed = False
+                elif bias == "BEARISH" and last_close >= orb_low:
+                    orb_passed = False
+        except Exception:
+            pass
+
         side = None
         # Ultra-Strict Trigger: 
         # 1. Must be in Killzone 
         # 2. Must be aligned with HTF Trend
         # 3. Must be in the right zone (Discount for BUY, Premium for SELL)
         # 4. Min score 8
-        if in_killzone and bias == htf_trend and score >= 8:
+        # 5. OI must be supportive (PCR check)
+        # 6. ORB range must be broken
+        if in_killzone and bias == htf_trend and score >= 8 and oi_supportive and orb_passed:
             if phase != "CONSOLIDATION":
                 if bias == "BULLISH" and structure_data['in_discount']:
                     if structure_data['bos_bullish']: side = "BUY"
@@ -130,8 +208,13 @@ class SignalEngine:
             'fvg_ready': structure_data.get('fvg_gap', False)
         }
 
-    def generate_signal(self, df_1m, df_5m, df_15m, df_1h):
+    def generate_signal(self, df_1m, df_5m, df_15m, df_1h, symbol=None):
         """Wrapper for main.py — uses ATR-based TP/SL and Order Block validation."""
+        if not symbol:
+            # Guess symbol based on current price
+            entry = df_1m['close'].iloc[-1]
+            symbol = "BANKNIFTY" if entry > 35000 else "NIFTY"
+
         structure_data = self.struct_engine.analyze(df_15m)  # FIX: reuse from __init__
 
         # FIX: PDH/PDL — use actual previous session high/low, not the whole fetched window
@@ -144,7 +227,7 @@ class SignalEngine:
             'pdl': prev_candles['low'].min()   # Previous session low
         }
 
-        eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True})
+        eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True}, symbol=symbol)
 
         # FIX: Proper ATR — rolling mean of true ranges, not raw high-low range
         # The old calculation was: (rolling_max - rolling_min) which is a range, not ATR

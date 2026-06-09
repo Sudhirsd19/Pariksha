@@ -831,6 +831,20 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
             "message": f"{symbol} aaj {closed_dt} pe already trade hua aur close ho gaya. Kal dobara try karo."
         }
         
+    # Check Risk Limits
+    can_trade_global, lock_reason = risk_manager.check_hard_locks(settings)
+    if not can_trade_global:
+        return {"status": "error", "message": f"Execution Blocked by Risk Manager: {lock_reason}"}
+        
+    if not risk_manager.can_trade(side):
+        if risk_manager.trades_today >= risk_manager.max_trades:
+            reason = f"Max daily trades limit reached ({risk_manager.trades_today}/{risk_manager.max_trades})"
+        elif risk_manager.consecutive_losses >= risk_manager.max_consecutive_losses:
+            reason = f"Consecutive loss limit reached ({risk_manager.consecutive_losses}/{risk_manager.max_consecutive_losses})"
+        else:
+            reason = f"Directional exposure limit hit for {side} trades"
+        return {"status": "error", "message": f"Execution Blocked by Risk Manager: {reason}"}
+
     from backend.engines.stock_analyzer import stock_analyzer
     res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
     if res.get("status") == "error":
@@ -893,7 +907,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
             token=token,
             qty=qty,
             side=side,
-            price=0,
+            price=price,
             order_type="MARKET",
             exchange="NSE"
         )
@@ -901,6 +915,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
             return {"status": "error", "message": "Broker execution failed"}
         signal_data["order_id"] = order_id
         
+    risk_manager.record_entry(side)
     signals.append(signal_data)
     if ws_manager:
         ws_manager.subscribe_token(token, 1) # 1 = NSE Equity Cash
@@ -1080,6 +1095,13 @@ async def trading_loop():
                 token = token_manager.get_token(symbol)
                 exchange = token_manager.get_exchange(symbol)
                 
+                # Update option chain OI data for PCR calculation
+                try:
+                    from backend.engines.oi_engine import oi_engine
+                    await asyncio.to_thread(oi_engine.fetch_options_chain, symbol, broker.smart_api)
+                except Exception as e:
+                    print(f"[Loop] Options chain OI update failed for {symbol}: {e}")
+
                 # API Rate Limit (3 req/sec) Management: Fetch sequentially with delay
                 df_1m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_MINUTE", 2, exchange)
                 await asyncio.sleep(0.4)
@@ -1094,7 +1116,7 @@ async def trading_loop():
 
                 # Active signal engine computes ATR and EMA 50 on the fly; redundant indicator calculations are removed for performance.
                 
-                signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h)
+                signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h, symbol=symbol)
                 side = signal_data['signal']
 
                 # --- CORRELATION GUARD (Nifty vs BankNifty) ---

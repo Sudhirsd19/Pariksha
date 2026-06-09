@@ -5,6 +5,7 @@ logs/
 backend/.env
 firebase_credentials.json
 backend/firebase_credentials.json
+backend/backend/
 
 # Python
 __pycache__/

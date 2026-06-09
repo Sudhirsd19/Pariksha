@@ -141,8 +141,8 @@ class TradeManager:
                         current_profit  = current_ltp - trade['entry']
 
                         # STEP 1: Move SL to exact breakeven at 1:1 RR
-                        # (when profit >= full TP distance, i.e. 1:1 achieved)
-                        if current_profit >= tp_distance and trade['sl'] < trade['entry']:
+                        # (when profit >= 50% of TP distance, i.e. 1:1 achieved)
+                        if current_profit >= (tp_distance * 0.5) and trade['sl'] < trade['entry']:
                             new_sl = trade['entry']  # exact breakeven
                             if new_sl > trade['sl']:
                                 trade['sl'] = round(new_sl, 2)
@@ -164,7 +164,8 @@ class TradeManager:
                         current_profit = trade['entry'] - current_ltp
 
                         # STEP 1: Move SL to exact breakeven at 1:1 RR
-                        if current_profit >= tp_distance and trade['sl'] > trade['entry']:
+                        # (when profit >= 50% of TP distance, i.e. 1:1 achieved)
+                        if current_profit >= (tp_distance * 0.5) and trade['sl'] > trade['entry']:
                             new_sl = trade['entry']  # exact breakeven
                             if new_sl < trade['sl']:
                                 trade['sl'] = round(new_sl, 2)

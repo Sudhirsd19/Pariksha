@@ -6,6 +6,7 @@ class RiskManager:
         self.peak_capital = initial_capital
         self.daily_loss = 0
         self.weekly_loss = 0
+        self.daily_pnl = 0.0  # Realized net PnL today
         self.consecutive_losses = 0
         self.max_consecutive_losses = 3
         
@@ -22,8 +23,7 @@ class RiskManager:
         self.max_trades = config.MAX_TRADES_PER_DAY  # FIX C-3: Was hardcoded 10, config says 5
         self.risk_per_trade_pct = 0.01 # 1%
 
-        # FIX H-3: Removed stale hardcoded May 2026 news events — those dates are past and the check was dead.
-        # News events are now loaded dynamically from Firestore at check-time.
+        # dynamic news events
         self.news_events = []  # Populated from Firestore: quantum_system/news_events
 
     def is_news_window(self):
@@ -33,7 +33,7 @@ class RiskManager:
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now = datetime.datetime.now(ist_tz).replace(tzinfo=None)
         
-        # FIX H-3: Load news events from Firestore dynamically
+        # dynamic news loading
         try:
             from backend.config.firebase_config import get_db
             db = get_db()
@@ -50,7 +50,7 @@ class RiskManager:
                 event_time = datetime.datetime.strptime(event_str, "%Y-%m-%d %H:%M")
                 diff = abs((now - event_time).total_seconds() / 60)
                 if diff <= 30:  # 30 min buffer around event
-                    return True
+                     return True
             except ValueError:
                 continue
         return False
@@ -60,8 +60,6 @@ class RiskManager:
         from datetime import timezone, timedelta
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now = datetime.datetime.now(ist_tz)
-        # FIX H-4: Was blocking 9:15-9:30 which conflicts with morning killzone (9:15-10:45).
-        # Now only blocks the first 5 min (price discovery), allowing killzone to operate from 9:20.
         if now.hour == 9 and 15 <= now.minute < 20:
             return True
         # Block 1:00 PM to 1:30 PM (European market open volatility)
@@ -81,8 +79,15 @@ class RiskManager:
         if self.capital < (self.peak_capital * (1 - self.max_drawdown_pct)):
             return False, "Strategy Stop-Out: Max Drawdown Limit Hit."
         
+        # Check Daily Loss Lock
         if self.daily_loss >= (self.capital * self.max_daily_loss_pct):
             return False, f"Daily Lock: Max Daily Loss Hit (Rs.{self.daily_loss:.2f})."
+
+        # Check Daily Profit Cap Lock
+        daily_profit_cap_pct = float(settings.get("daily_profit_cap_pct", 0.03))  # Default 3%
+        start_of_day_capital = self.capital - self.daily_pnl
+        if start_of_day_capital > 0 and self.daily_pnl >= (start_of_day_capital * daily_profit_cap_pct):
+            return False, f"Daily Profit Cap Lock: Profit target reached (Rs.{self.daily_pnl:.2f})."
 
         if self.weekly_loss >= (self.capital * self.max_weekly_loss_pct):
             return False, "Weekly Lock: Max Weekly Loss Hit."
@@ -122,6 +127,15 @@ class RiskManager:
         
         raw_quantity = int(total_risk / risk_per_share)
         
+        # Check if it is an Equity stock (does not end with FUT, CE, PE, and is not NIFTY/BANKNIFTY)
+        is_equity = symbol not in ["NIFTY", "BANKNIFTY"] and not any(suffix in symbol for suffix in ["FUT", "CE", "PE"])
+        
+        if is_equity:
+            # Equities do not trade in lots
+            qty = raw_quantity
+            if qty < 1: qty = 1
+            return qty
+            
         # Get correct lot size from token_manager (2026: Nifty=65, BankNifty=30)
         from backend.utils.token_manager import token_manager
         lot_size = token_manager.get_lotsize(symbol)
@@ -134,11 +148,11 @@ class RiskManager:
 
     def update_pnl(self, pnl, side=None):
         """Updates daily trackers and exposure."""
-        # FIX C-3: daily_loss was inverted — losses were decreasing it (daily_loss -= negative_pnl = increase)
-        # Now losses correctly accumulate as a positive value for comparison against threshold
         if pnl < 0:
             self.daily_loss += abs(pnl)  # Accumulate realized losses as positive total
             self.weekly_loss += abs(pnl)
+        
+        self.daily_pnl += pnl  # Track daily net PnL (profit and loss)
         self.trades_today += 1
         
         self.capital += pnl
@@ -160,6 +174,7 @@ class RiskManager:
 
     def reset_daily(self):
         self.daily_loss = 0
+        self.daily_pnl = 0.0
         self.trades_today = 0
         self.consecutive_losses = 0
         self.long_exposure = 0

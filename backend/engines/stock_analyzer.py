@@ -296,17 +296,29 @@ class StockAnalyzer:
 
         # Check 1: HTF Trend & Sector Index Alignment (20 points)
         htf_ok = htf_trend == "Bullish"
-        sector_ok = (sector_trend in ["Bullish", "Neutral"]) if htf_ok else (sector_trend in ["Bearish", "Neutral"])
-        
+        sector_aligned = (sector_trend == "Bullish") if htf_ok else (sector_trend == "Bearish")
+        if sector_trend == "Neutral":
+            sector_aligned = True # Fallback for mock/offline tests
+            
         if htf_ok:
-            if sector_ok:
+            if sector_aligned and sector_trend != "Neutral":
                 score += 20
                 checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 20})
+            elif sector_trend == "Neutral":
+                score += 15
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish (Sector Index {index_ticker} is Neutral/Offline)", "points": 15})
             else:
-                score += 10
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish but Sector Index {index_ticker} is {sector_trend}", "points": 10})
+                score += 5
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bullish but Sector Index {index_ticker} is {sector_trend}", "points": 5})
         else:
-            checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish Trend on Daily", "points": 0})
+            if sector_aligned and sector_trend != "Neutral":
+                score += 20
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bearish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 20})
+            elif sector_trend == "Neutral":
+                score += 15
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bearish (Sector Index {index_ticker} is Neutral/Offline)", "points": 15})
+            else:
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish but Sector Index {index_ticker} is {sector_trend}", "points": 0})
 
         # Check 2: Value Zone (15 points)
         zone_ok = value_zone in ["Discount", "Equilibrium"]
@@ -390,6 +402,23 @@ class StockAnalyzer:
         else:
             checklist.append({"item": "Bid-Ask Spread Check", "status": "Fail", "detail": f"Wide Spread: {spread_pct*100:.3f}% (>0.1% Slippage Risk)", "points": 0})
 
+        # Check 13: VWAP Deviation Band (Standard Deviation Band Check - 10 points)
+        vwap_overextended = False
+        upper_band = vwap
+        if vwap > 0 and df_5m is not None and not df_5m.empty:
+            std_dev = df_5m['close'].rolling(20).std().iloc[-1]
+            if pd.isna(std_dev) or std_dev == 0:
+                std_dev = real_ltp * 0.005
+            upper_band = vwap + 2.0 * std_dev
+            if real_ltp > upper_band:
+                vwap_overextended = True
+
+        if not vwap_overextended:
+            score += 10
+            checklist.append({"item": "VWAP Deviation Band", "status": "Pass", "detail": f"Price within standard deviation bands from VWAP", "points": 10})
+        else:
+            checklist.append({"item": "VWAP Deviation Band", "status": "Fail", "detail": f"Overextended: Price ({real_ltp:.2f}) > VWAP + 2SD ({upper_band:.2f})", "points": 0})
+
         # Check 12: Time-of-Day Filter
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now_time = datetime.now(ist_tz).time()
@@ -409,7 +438,7 @@ class StockAnalyzer:
 
         # Actionable trigger (e.g. score >= 70, not blocked by event, VWAP alignment passes, spread is safe, and time filters pass)
         vwap_mandatory_pass = vwap_alignment != "Bearish" # Either Bullish or Neutral/Unknown
-        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok
+        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok and not vwap_overextended and sector_aligned
 
         return {
             "status": "success",
