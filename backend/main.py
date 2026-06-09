@@ -615,12 +615,13 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
 
     api_client = broker.smart_api if broker.session else None
 
-    # Step 1: Bulk price fetch via yfinance (much faster than Angel One for price-only)
+    # Step 1: Bulk price fetch via yfinance
     tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
     price_map = {}
     try:
+        import yfinance as yf
         raw = await asyncio.to_thread(
-            lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=True)
+            lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=False)
         )
         import pandas as pd
         if not raw.empty:
@@ -660,12 +661,13 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
     try:
         import yfinance as yf
         nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
-        last_price = float(nifty_data.get("last_price", 0))
-        prev_close = float(nifty_data.get("previous_close", 0))
-        if last_price > prev_close:
-            nse_trend = "Bullish"
-        elif last_price < prev_close:
-            nse_trend = "Bearish"
+        last_price = float(getattr(nifty_data, "last_price", 0))
+        prev_close = float(getattr(nifty_data, "previous_close", 0))
+        if last_price > 0 and prev_close > 0:
+            if last_price > prev_close:
+                nse_trend = "Bullish"
+            elif last_price < prev_close:
+                nse_trend = "Bearish"
     except Exception as e:
         print(f"[SmartScreener] NIFTY trend fetch failed: {e}")
 
@@ -732,12 +734,13 @@ async def analyze_stock(symbol: str):
     try:
         import yfinance as yf
         nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
-        last_price = float(nifty_data.get("last_price", 0))
-        prev_close = float(nifty_data.get("previous_close", 0))
-        if last_price > prev_close:
-            nse_trend = "Bullish"
-        elif last_price < prev_close:
-            nse_trend = "Bearish"
+        last_price = float(getattr(nifty_data, "last_price", 0))
+        prev_close = float(getattr(nifty_data, "previous_close", 0))
+        if last_price > 0 and prev_close > 0:
+            if last_price > prev_close:
+                nse_trend = "Bullish"
+            elif last_price < prev_close:
+                nse_trend = "Bearish"
     except Exception as e:
         pass
             
