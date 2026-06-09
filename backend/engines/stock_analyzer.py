@@ -3,7 +3,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dt_time
 
 # Try importing yfinance, fallback to mock/scraped data if not installed
 try:
@@ -391,7 +391,6 @@ class StockAnalyzer:
             checklist.append({"item": "Bid-Ask Spread Check", "status": "Fail", "detail": f"Wide Spread: {spread_pct*100:.3f}% (>0.1% Slippage Risk)", "points": 0})
 
         # Check 12: Time-of-Day Filter
-        from datetime import time as dt_time
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         now_time = datetime.now(ist_tz).time()
         
