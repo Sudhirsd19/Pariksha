@@ -688,24 +688,32 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
         return {"status": "success", "results": [], "scanned": 0, "affordable": 0,
                 "message": f"No stocks found under ₹{max_price:.0f}"}
 
-    nse_trend = "Neutral"
+    index_trends = {}
     try:
         import yfinance as yf
-        nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
-        last_price = float(getattr(nifty_data, "last_price", 0))
-        prev_close = float(getattr(nifty_data, "previous_close", 0))
-        if last_price > 0 and prev_close > 0:
-            if last_price > prev_close:
-                nse_trend = "Bullish"
-            elif last_price < prev_close:
-                nse_trend = "Bearish"
+        index_tickers = ["^NSEI", "^NSEBANK", "^CNXIT", "^CNXENERGY", "^CNXFIN", "^CNXMETAL", "^CNXPHARMA", "^CNXFMCG", "^CNXAUTO", "^CNXINFRA", "^CNXREALTY"]
+        
+        async def fetch_index_trend(ticker):
+            try:
+                t_obj = yf.Ticker(ticker)
+                fast_info = await asyncio.to_thread(lambda: t_obj.fast_info)
+                last_price = float(getattr(fast_info, "last_price", 0))
+                prev_close = float(getattr(fast_info, "previous_close", 0))
+                if last_price > 0 and prev_close > 0:
+                    return ticker, ("Bullish" if last_price > prev_close else "Bearish")
+            except Exception as ex:
+                print(f"[IndexTrend] Failed to fetch {ticker}: {ex}")
+            return ticker, "Neutral"
+
+        tasks = [fetch_index_trend(t) for t in index_tickers]
+        index_trends = dict(await asyncio.gather(*tasks))
     except Exception as e:
-        print(f"[SmartScreener] NIFTY trend fetch failed: {e}")
+        print(f"[SmartScreener] Parallel index trends fetch failed: {e}")
 
     # Step 3: Run full analysis sequentially (throttled for AngelOne 3 req/sec)
     async def analyze_one(sym):
         try:
-            res = await stock_analyzer.analyze_stock(sym, api_client, nse_trend)
+            res = await stock_analyzer.analyze_stock(sym, api_client, index_trends)
             if res and res.get("status") == "success":
                 return res
         except Exception as e:
@@ -761,22 +769,22 @@ async def analyze_stock(symbol: str):
         except Exception as e:
             print(f"[AnalyzeStock] Startup-fallback broker login failed: {e}")
             
-    nse_trend = "Neutral"
+    from backend.engines.stock_analyzer import STOCK_SECTOR_MAP
+    index_ticker = STOCK_SECTOR_MAP.get(symbol, "^NSEI")
+    index_trends = {}
     try:
         import yfinance as yf
-        nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
-        last_price = float(getattr(nifty_data, "last_price", 0))
-        prev_close = float(getattr(nifty_data, "previous_close", 0))
+        t_obj = yf.Ticker(index_ticker)
+        fast_info = await asyncio.to_thread(lambda: t_obj.fast_info)
+        last_price = float(getattr(fast_info, "last_price", 0))
+        prev_close = float(getattr(fast_info, "previous_close", 0))
         if last_price > 0 and prev_close > 0:
-            if last_price > prev_close:
-                nse_trend = "Bullish"
-            elif last_price < prev_close:
-                nse_trend = "Bearish"
+            index_trends[index_ticker] = "Bullish" if last_price > prev_close else "Bearish"
     except Exception as e:
-        pass
+        print(f"[AnalyzeStock] Trend fetch failed for index {index_ticker}: {e}")
             
     api_client = broker.smart_api if broker.session else None
-    res = await stock_analyzer.analyze_stock(symbol, api_client, nse_trend)
+    res = await stock_analyzer.analyze_stock(symbol, api_client, index_trends)
     return res
 
 def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):
@@ -851,20 +859,29 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
             "message": f"Requested quantity ({qty}) exceeds daily capital limit. Max allowed is {max_allowed_qty} shares."
         }
         
+    atr = res.get("atr", 0.0)
+    if atr > 0:
+        sl = price - (2.0 * atr) if side == "BUY" else price + (2.0 * atr)
+        tp = price + (4.0 * atr) if side == "BUY" else price - (4.0 * atr)
+    else:
+        sl = price - (price * 0.02) if side == "BUY" else price + (price * 0.02)
+        tp = price + (price * 0.04) if side == "BUY" else price - (price * 0.04)
+
     signal_data = {
         "signal": side,
         "symbol": trading_symbol,
         "entry": price,
         "actual_entry": price,
-        "sl": price - (price * 0.02) if side == "BUY" else price + (price * 0.02),
-        "tp": price + (price * 0.04) if side == "BUY" else price - (price * 0.04),
+        "sl": sl,
+        "tp": tp,
         "reason": f"ALGO EQUITY {side} - Score: {res['score']}%",
         "is_paper": is_paper_trading,
         "timestamp": int(time.time() * 1000),
         "token": token,
         "qty": qty,
         "instrument_type": "EQUITY",
-        "original_signal": side
+        "original_signal": side,
+        "atr": atr
     }
     
     order_id = None

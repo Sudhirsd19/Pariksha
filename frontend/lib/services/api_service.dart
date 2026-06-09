@@ -3,9 +3,35 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  final String baseUrl = kDebugMode
-      ? "http://10.0.2.2:8000"
-      : "https://pariksha-production-ca52.up.railway.app";
+  static String _resolvedBaseUrl = "https://pariksha-production-ca52.up.railway.app";
+  
+  String get baseUrl => _resolvedBaseUrl;
+
+  String get wsUrl {
+    if (baseUrl.startsWith("https://")) {
+      return "wss://${baseUrl.replaceFirst("https://", "")}/ws/market";
+    } else {
+      return "ws://${baseUrl.replaceFirst("http://", "")}/ws/market";
+    }
+  }
+
+  static Future<void> init() async {
+    if (kDebugMode) {
+      try {
+        final uri = Uri.parse("http://10.0.2.2:8000/status");
+        final response = await http.get(uri).timeout(const Duration(milliseconds: 500));
+        if (response.statusCode == 200) {
+          _resolvedBaseUrl = "http://10.0.2.2:8000";
+          debugPrint("[ApiService] Detected local emulator backend at $_resolvedBaseUrl");
+          return;
+        }
+      } catch (e) {
+        debugPrint("[ApiService] Local emulator backend not reachable. Falling back to production Railway URL. Error: $e");
+      }
+    }
+    _resolvedBaseUrl = "https://pariksha-production-ca52.up.railway.app";
+    debugPrint("[ApiService] Using production backend at $_resolvedBaseUrl");
+  }
 
   Future<Map<String, dynamic>> getStatus() async {
     try {

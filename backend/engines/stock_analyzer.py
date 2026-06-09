@@ -3,7 +3,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Try importing yfinance, fallback to mock/scraped data if not installed
 try:
@@ -15,6 +15,43 @@ from backend.utils.token_manager import token_manager
 from backend.utils.historical_data import fetch_historical_data
 from backend.engines.structure_engine import StructureEngine
 from backend.indicators.technical_indicators import TechnicalIndicators
+
+STOCK_SECTOR_MAP = {
+    "HDFCBANK": "^NSEBANK", "ICICIBANK": "^NSEBANK", "SBIN": "^NSEBANK",
+    "AXISBANK": "^NSEBANK", "KOTAKBANK": "^NSEBANK", "INDUSINDBK": "^NSEBANK",
+    "PNB": "^NSEBANK", "BOB": "^NSEBANK", "UNIONBANK": "^NSEBANK",
+    "CANBK": "^NSEBANK", "IDFCFIRSTB": "^NSEBANK", "BANDHANBNK": "^NSEBANK",
+    "FEDERALBNK": "^NSEBANK",
+    
+    "TCS": "^CNXIT", "INFY": "^CNXIT", "WIPRO": "^CNXIT", "HCLTECH": "^CNXIT",
+    "TECHM": "^CNXIT", "LTIM": "^CNXIT", "COFORGE": "^CNXIT",
+    
+    "RELIANCE": "^CNXENERGY", "NTPC": "^CNXENERGY", "POWERGRID": "^CNXENERGY",
+    "TATAPOWER": "^CNXENERGY", "ONGC": "^CNXENERGY", "COALINDIA": "^CNXENERGY",
+    "BPCL": "^CNXENERGY", "IOC": "^CNXENERGY", "GAIL": "^CNXENERGY",
+    
+    "BAJFINANCE": "^CNXFIN", "BAJAJFINSV": "^CNXFIN", "CHOLAFIN": "^CNXFIN",
+    "PFC": "^CNXFIN", "RECLTD": "^CNXFIN",
+    
+    "TATASTEEL": "^CNXMETAL", "JINDALSTEL": "^CNXMETAL", "HINDALCO": "^CNXMETAL",
+    "JSWSTEEL": "^CNXMETAL", "VEDL": "^CNXMETAL", "NMDC": "^CNXMETAL",
+    "NATIONALUM": "^CNXMETAL",
+    
+    "SUNPHARMA": "^CNXPHARMA", "CIPLA": "^CNXPHARMA", "DRREDDY": "^CNXPHARMA",
+    "DIVISLAB": "^CNXPHARMA", "APOLLOHOSP": "^CNXPHARMA",
+    
+    "ITC": "^CNXFMCG", "HINDUNILVR": "^CNXFMCG", "NESTLEIND": "^CNXFMCG",
+    "BRITANNIA": "^CNXFMCG", "TATACONSUM": "^CNXFMCG",
+    
+    "TATAMOTORS": "^CNXAUTO", "M&M": "^CNXAUTO", "MARUTI": "^CNXAUTO",
+    "BAJAJ-AUTO": "^CNXAUTO", "HEROMOTOCO": "^CNXAUTO", "EICHERMOT": "^CNXAUTO",
+    "TVSMOTOR": "^CNXAUTO",
+    
+    "LT": "^CNXINFRA", "ADANIPORTS": "^CNXINFRA", "GMRINFRA": "^CNXINFRA",
+    "IRCON": "^CNXINFRA", "RVNL": "^CNXINFRA", "NBCC": "^CNXINFRA",
+    
+    "DLF": "^CNXREALTY", "GODREJPROP": "^CNXREALTY", "OBEROIRLTY": "^CNXREALTY",
+}
 
 # Offline fundamental data for common NSE stocks (as fallback and speed optimization)
 STOCK_FUNDAMENTAL_CACHE = {
@@ -34,7 +71,7 @@ class StockAnalyzer:
     def __init__(self):
         self.struct_engine = StructureEngine(lookback=20)
 
-    async def analyze_stock(self, symbol: str, smart_api=None, nse_trend: str = "Neutral") -> dict:
+    async def analyze_stock(self, symbol: str, smart_api=None, index_trends = None) -> dict:
         """
         Runs full technical and fundamental analysis on a stock.
         symbol: e.g. 'RELIANCE'
@@ -48,6 +85,27 @@ class StockAnalyzer:
         symbol = stock_info["name"]  # Use resolved name (e.g. HDFCBANK instead of hdfc)
         exchange = "NSE"  # Equity cash is on NSE
         trading_symbol = stock_info["symbol"]
+
+        # Resolve Sector Index Trend
+        sector_trend = "Neutral"
+        index_ticker = STOCK_SECTOR_MAP.get(symbol, "^NSEI")
+        
+        if isinstance(index_trends, str):
+            # Backward compatibility: index_trends was passed as a flat string
+            sector_trend = index_trends
+        elif isinstance(index_trends, dict) and index_ticker in index_trends:
+            sector_trend = index_trends[index_ticker]
+        else:
+            # Fetch single index trend dynamically if not pre-cached
+            try:
+                ticker_obj = yf.Ticker(index_ticker)
+                fast_info = await asyncio.to_thread(lambda: ticker_obj.fast_info)
+                last_price = float(getattr(fast_info, "last_price", 0))
+                prev_close = float(getattr(fast_info, "previous_close", 0))
+                if last_price > 0 and prev_close > 0:
+                    sector_trend = "Bullish" if last_price > prev_close else "Bearish"
+            except:
+                pass
 
         # 2. Fetch LTP from yfinance (free, no auth) as reliable real-time price
         real_ltp = None
@@ -104,6 +162,8 @@ class StockAnalyzer:
         day_high = 0.0
         day_low = 0.0
         day_volume = 0
+        spread_pct = 0.0
+        spread_ok = True
         
         if smart_api:
             try:
@@ -121,6 +181,17 @@ class StockAnalyzer:
                             day_low = float(item.get("low", 0.0))
                             day_volume = int(item.get("tradeVolume", 0))
                             market_depth = True
+                            
+                            # Bid-Ask spread
+                            depth_data = item.get("depth", {})
+                            buy_list = depth_data.get("buy", [])
+                            sell_list = depth_data.get("sell", [])
+                            if buy_list and sell_list:
+                                best_bid = float(buy_list[0].get("price", 0.0))
+                                best_ask = float(sell_list[0].get("price", 0.0))
+                                if best_bid > 0 and best_ask > 0:
+                                    spread_pct = (best_ask - best_bid) / best_bid
+                                    spread_ok = spread_pct <= 0.001  # Max 0.1% spread
             except Exception as e:
                 print(f"[StockAnalyzer] Market Depth fetch failed for {symbol}: {e}")
 
@@ -131,6 +202,10 @@ class StockAnalyzer:
         close_1d = last_1d["close"]
         ema_50 = last_1d["EMA_50"]
         htf_trend = "Bullish" if close_1d > ema_50 else "Bearish"
+
+        # Calculate ATR on 5M candles
+        df_5m = TechnicalIndicators.add_atr(df_5m, 14)
+        atr_5m = float(df_5m["ATR"].iloc[-1]) if "ATR" in df_5m.columns else 0.0
 
         # Market structure on 5M candles
         struct_res = self.struct_engine.analyze(df_5m)
@@ -219,19 +294,19 @@ class StockAnalyzer:
         score = 0
         checklist = []
 
-        # Check 1: HTF Trend Alignment & Sector Alignment (20 points)
+        # Check 1: HTF Trend & Sector Index Alignment (20 points)
         htf_ok = htf_trend == "Bullish"
-        sector_ok = (nse_trend in ["Bullish", "Neutral"]) if htf_ok else (nse_trend in ["Bearish", "Neutral"])
+        sector_ok = (sector_trend in ["Bullish", "Neutral"]) if htf_ok else (sector_trend in ["Bearish", "Neutral"])
         
         if htf_ok:
             if sector_ok:
                 score += 20
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with NIFTY: {nse_trend})", "points": 20})
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 20})
             else:
                 score += 10
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish but NIFTY is {nse_trend}", "points": 10})
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish but Sector Index {index_ticker} is {sector_trend}", "points": 10})
         else:
-            checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish Trend", "points": 0})
+            checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish Trend on Daily", "points": 0})
 
         # Check 2: Value Zone (15 points)
         zone_ok = value_zone in ["Discount", "Equilibrium"]
@@ -284,8 +359,6 @@ class StockAnalyzer:
             checklist.append({"item": "OHOL Setup", "status": "Fail", "detail": ohol_setup, "points": 0})
 
         # Check 4: Debt-to-Equity (15 points)
-        # Safe if Debt to Equity < 1.0 (typical for non-banking equities)
-        # Let's adjust for banking stocks if we know them (e.g. SBIN, HDFCBANK, ICICIBANK can have higher debt)
         is_bank = symbol in ["HDFCBANK", "ICICIBANK", "SBIN"]
         debt_ok = (debt_to_equity < 1.0) or (is_bank and debt_to_equity < 2.0)
         if debt_ok:
@@ -295,7 +368,6 @@ class StockAnalyzer:
             checklist.append({"item": "Debt-to-Equity Check", "status": "Fail", "detail": f"D/E is {debt_to_equity:.2f} (Risky)", "points": 0})
 
         # Check 5: Promoter Pledge (15 points)
-        # Safe if less than 10% pledged
         pledge_ok = promoter_pledge < 10.0
         if pledge_ok:
             score += 15
@@ -311,9 +383,34 @@ class StockAnalyzer:
         else:
             checklist.append({"item": "Economic Event Calendar", "status": "Fail", "detail": f"{news_event}", "points": 0})
 
-        # Actionable trigger (e.g. score >= 70, not blocked by event, and VWAP alignment passes)
+        # Check 11: Bid-Ask Spread Check (10 points)
+        if spread_ok:
+            score += 10
+            checklist.append({"item": "Bid-Ask Spread Check", "status": "Pass", "detail": f"Spread is {spread_pct*100:.3f}% (Safe)", "points": 10})
+        else:
+            checklist.append({"item": "Bid-Ask Spread Check", "status": "Fail", "detail": f"Wide Spread: {spread_pct*100:.3f}% (>0.1% Slippage Risk)", "points": 0})
+
+        # Check 12: Time-of-Day Filter
+        from datetime import time as dt_time
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now_time = datetime.now(ist_tz).time()
+        
+        is_lunch_hours = dt_time(11, 30) <= now_time <= dt_time(13, 15)
+        is_after_hours = now_time > dt_time(14, 30)
+        
+        time_ok = not is_after_hours
+        min_score_required = 85 if is_lunch_hours else 70
+        
+        if is_after_hours:
+            checklist.append({"item": "Time-of-Day Filter", "status": "Fail", "detail": "After-hours (No new trades after 2:30 PM)", "points": 0})
+        elif is_lunch_hours:
+            checklist.append({"item": "Time-of-Day Filter", "status": "Warn", "detail": "Lunch hours (11:30 AM - 1:15 PM): requires 85+ score", "points": 0})
+        else:
+            checklist.append({"item": "Time-of-Day Filter", "status": "Pass", "detail": "Active trading hours", "points": 0})
+
+        # Actionable trigger (e.g. score >= 70, not blocked by event, VWAP alignment passes, spread is safe, and time filters pass)
         vwap_mandatory_pass = vwap_alignment != "Bearish" # Either Bullish or Neutral/Unknown
-        actionable = (score >= 70) and event_ok and vwap_mandatory_pass
+        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok
 
         return {
             "status": "success",
@@ -334,6 +431,7 @@ class StockAnalyzer:
             "vwap": vwap,
             "volume_breakout": volume_breakout,
             "ohol_setup": ohol_setup,
+            "atr": atr_5m,
             "checklist": checklist
         }
 

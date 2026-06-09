@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -133,10 +132,7 @@ class TradingProvider with ChangeNotifier {
       // FIX HIGH-03: Cancel existing subscription before creating new one
       _wsSubscription?.cancel();
       _wsChannel?.sink.close();
-      // ws://10.0.2.2:8000/ws/market -> emulator tunnels 10.0.2.2 to host machine
-      const String wsUrl = kDebugMode
-          ? 'ws://10.0.2.2:8000/ws/market'
-          : 'wss://pariksha-production-ca52.up.railway.app/ws/market';
+      final String wsUrl = _apiService.wsUrl;
       _wsChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _wsSubscription = _wsChannel!.stream.listen(
         (data) {

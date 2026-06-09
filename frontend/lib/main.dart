@@ -5,7 +5,7 @@ import 'providers/trading_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
-
+import 'services/api_service.dart';
 import 'package:flutter/foundation.dart';
 
 void main() async {
@@ -27,6 +27,7 @@ void main() async {
       await Firebase.initializeApp();
     }
     await NotificationService.initialize();
+    await ApiService.init();
   } catch (e) {
     debugPrint("Initialization Error: $e");
   }

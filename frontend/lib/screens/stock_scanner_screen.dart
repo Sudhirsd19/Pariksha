@@ -790,16 +790,25 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                 ),
                 itemBuilder: (context, idx) {
                   final item = checklist[idx];
-                  final bool pass = item['status'] == 'Pass';
+                  final String status = item['status'] ?? "Fail";
+                  final bool pass = status == 'Pass';
+                  final bool warn = status == 'Warn';
                   final String name = item['item'] ?? "";
                   final String detail = item['detail'] ?? "";
                   final int points = item['points'] ?? 0;
 
+                  final IconData icon = pass
+                      ? Icons.check_circle_outline_rounded
+                      : (warn ? Icons.warning_amber_rounded : Icons.cancel_outlined);
+                  final Color iconColor = pass
+                      ? Colors.greenAccent
+                      : (warn ? Colors.orangeAccent : Colors.redAccent);
+
                   return Row(
                     children: [
                       Icon(
-                        pass ? Icons.check_circle_outline_rounded : Icons.cancel_outlined,
-                        color: pass ? Colors.greenAccent : Colors.redAccent,
+                        icon,
+                        color: iconColor,
                         size: 20,
                       ),
                       const SizedBox(width: 14),
@@ -829,7 +838,9 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                       Text(
                         "+$points pts",
                         style: TextStyle(
-                          color: pass ? Colors.white30 : Colors.white10,
+                          color: pass
+                              ? Colors.white30
+                              : (warn ? Colors.white24 : Colors.white10),
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                         ),
