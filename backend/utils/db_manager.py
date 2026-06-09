@@ -40,6 +40,20 @@ class DatabaseManager:
             print(f"Error updating status to DB: {e}")
             
     @staticmethod
+    def get_system_status():
+        db = get_db()
+        if not db: return None
+        
+        try:
+            doc = db.collection("quantum_system").document("live_status").get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
+        except Exception as e:
+            print(f"Error getting status from DB: {e}")
+            return None
+            
+    @staticmethod
     def get_settings():
         db = get_db()
         if not db: 

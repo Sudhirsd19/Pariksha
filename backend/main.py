@@ -140,6 +140,38 @@ async def startup_event():
                     restored_count += 1
             print(f"[Startup] Restored {restored_count} signals from Firestore.")
             persistence_manager.log_event("INFO", "SIGNALS_RESTORE", f"Restored {restored_count} signals from Firestore.")
+
+            # Restore open trades from Firestore (in case SQLite was wiped)
+            # Fetch all open trades first (no composite index needed), then filter by today's timestamp in Python
+            open_trades_query = db.collection("quantum_trades").where("status", "==", "OPEN").stream()
+            restored_open_trades = []
+            for doc_snapshot in open_trades_query:
+                trade_data = doc_snapshot.to_dict()
+                trade_data['id'] = doc_snapshot.id
+                if trade_data.get('timestamp', 0) >= start_of_day_ms:
+                    restored_open_trades.append(trade_data)
+            
+            if restored_open_trades:
+                with trade_manager._lock:
+                    for t in restored_open_trades:
+                        if not any(at.get('id') == t['id'] for at in trade_manager.active_trades):
+                            trade_manager.active_trades.append(t)
+                            persistence_manager.save_trade(t)
+                print(f"[Startup] Restored {len(restored_open_trades)} open trades from Firestore.")
+                persistence_manager.log_event("INFO", "ACTIVE_TRADES_RESTORE", f"Restored {len(restored_open_trades)} open trades from Firestore.")
+
+            # Restore system active state (is_active) from Firestore
+            system_status = db_manager.get_system_status()
+            if system_status:
+                global trading_active, trading_loop_task
+                trading_active = system_status.get("is_active", False)
+                if trading_active:
+                    print("[Startup] System is ACTIVE. Launching trading loop...")
+                    persistence_manager.log_event("INFO", "ENGINE_AUTOLUNCH", "System is active. Launching trading loop.")
+                    if trading_loop_task is None or trading_loop_task.done():
+                        trading_loop_task = asyncio.create_task(trading_loop())
+                else:
+                    print("[Startup] System is INACTIVE.")
     except Exception as e:
         print(f"[Startup] Could not restore daily stats or signals from Firestore (falling back to SQLite): {e}")
         try:

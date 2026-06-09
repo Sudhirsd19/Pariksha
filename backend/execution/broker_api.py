@@ -167,7 +167,8 @@ class AngelOneBroker:
                             qty=abs(net_qty),
                             side=side,
                             price=0,           # FIX: MARKET order — price is ignored by broker
-                            order_type="MARKET"
+                            order_type="MARKET",
+                            exchange=pos.get('exchange', 'NSE')
                         )
                         if not result:
                             print(f"[SquareOff] WARNING: Failed to close {pos['tradingsymbol']}")
