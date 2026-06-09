@@ -694,7 +694,7 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
     top_picks = [
         {
             "symbol": r["symbol"],
-            "ltp": round(r.get("ltp", 0), 2),
+            "ltp": round(float(r.get("ltp") or 0.0), 2),
             "score": r.get("score", 0),
             "htf_trend": r.get("htf_trend", "NEUTRAL"),
             "value_zone": r.get("value_zone", False),
@@ -702,7 +702,7 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
             "reason": r.get("reason", ""),
             "total_buyers": r.get("total_buyers", 0),
             "total_sellers": r.get("total_sellers", 0),
-            "vwap": round(r.get("vwap", 0), 2),
+            "vwap": round(float(r.get("vwap") or 0.0), 2),
             "volume_breakout": r.get("volume_breakout", False),
             "ohol_setup": r.get("ohol_setup", "None")
         }
