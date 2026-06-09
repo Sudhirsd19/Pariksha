@@ -133,12 +133,11 @@ class TradingProvider with ChangeNotifier {
       // FIX HIGH-03: Cancel existing subscription before creating new one
       _wsSubscription?.cancel();
       _wsChannel?.sink.close();
-      // ws://172.20.10.4:8000/ws/market -> connects to host machine on local network
-      _wsChannel = WebSocketChannel.connect(
-        Uri.parse(kDebugMode
-            ? 'ws://172.20.10.4:8000/ws/market'
-            : 'wss://pariksha-production-ca52.up.railway.app/ws/market'),
-      );
+      // ws://10.0.2.2:8000/ws/market -> emulator tunnels 10.0.2.2 to host machine
+      const String wsUrl = kDebugMode
+          ? 'ws://10.0.2.2:8000/ws/market'
+          : 'wss://pariksha-production-ca52.up.railway.app/ws/market';
+      _wsChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _wsSubscription = _wsChannel!.stream.listen(
         (data) {
           _wsReconnecting = false;
