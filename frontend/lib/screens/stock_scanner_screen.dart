@@ -1385,6 +1385,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
               final int score = item['score'] ?? 0;
               final String rec = item['recommendation'] ?? "NEUTRAL";
+              
+              final bool volBreakout = item['volume_breakout'] == true;
+              final String ohol = item['ohol_setup'] ?? 'None';
+              final double vwap = (item['vwap'] as num?)?.toDouble() ?? 0.0;
 
               // Find if this stock has an active trade open
               final now = DateTime.now();
@@ -1474,12 +1478,33 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                "₹${ltp.toStringAsFixed(2)} | Score: $score%",
+                                "₹${ltp.toStringAsFixed(2)} | Score: $score%${vwap > 0 ? ' | VWAP: ₹${vwap.toStringAsFixed(2)}' : ''}",
                                 style: const TextStyle(
                                   color: Colors.white60,
                                   fontSize: 11,
                                 ),
                               ),
+                              if (volBreakout || ohol != 'None')
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Row(
+                                    children: [
+                                      if (volBreakout)
+                                        Container(
+                                          margin: const EdgeInsets.only(right: 6),
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                          decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                          child: const Text("VOL SPK", style: TextStyle(color: Colors.orangeAccent, fontSize: 8, fontWeight: FontWeight.bold)),
+                                        ),
+                                      if (ohol != 'None')
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                          decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                          child: Text(ohol.split(' ')[0], style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8, fontWeight: FontWeight.bold)),
+                                        ),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                       ],
@@ -1871,6 +1896,12 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                   final String signal  = stock['signal'] ?? 'BUY';
                   final bool isBuySignal = signal == 'BUY';
                   final Color tileColor  = isBuySignal ? Colors.greenAccent : Colors.redAccent;
+                  
+                  final int totBuy = (stock['total_buyers'] as num?)?.toInt() ?? 0;
+                  final int totSell = (stock['total_sellers'] as num?)?.toInt() ?? 0;
+                  final double vwap = (stock['vwap'] as num?)?.toDouble() ?? 0.0;
+                  final bool volBreakout = stock['volume_breakout'] == true;
+                  final String ohol = stock['ohol_setup'] ?? 'None';
 
                   // Score color
                   final Color scoreColor = score >= 90 ? Colors.greenAccent
@@ -1966,6 +1997,32 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                     "$trend  •  ${zone.isNotEmpty ? zone : 'In Range'}",
                                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                                   ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "VWAP: ₹${vwap.toStringAsFixed(2)} | B: $totBuy / S: $totSell",
+                                    style: const TextStyle(color: Colors.white54, fontSize: 9),
+                                  ),
+                                  if (volBreakout || ohol != 'None')
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Row(
+                                        children: [
+                                          if (volBreakout)
+                                            Container(
+                                              margin: const EdgeInsets.only(right: 6),
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                              child: const Text("VOL SPK", style: TextStyle(color: Colors.orangeAccent, fontSize: 8, fontWeight: FontWeight.bold)),
+                                            ),
+                                          if (ohol != 'None')
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                              decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                              child: Text(ohol.split(' ')[0], style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8, fontWeight: FontWeight.bold)),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

@@ -115,6 +115,37 @@ class AngelOneBroker:
             print(f"ERROR fetching market data for {symbol}: {e}")
         return 0.0
 
+    def get_market_depth(self, exchange, symbol, token):
+        """
+        Fetch full market depth (Order Book), VWAP, Open, High, Low and Volume from Angel One.
+        """
+        if not self.session:
+            return None
+        try:
+            exchangeTokens = {
+                exchange: [token]
+            }
+            res = self.smart_api.getMarketData("FULL", exchangeTokens)
+            if res and res.get('status') and res.get('data'):
+                # Extract data for our token
+                data_list = res.get('data', {}).get('fetched', [])
+                for item in data_list:
+                    if item.get('symbolToken') == str(token) or item.get('symbolToken') == token:
+                        return {
+                            "totBuyQuan": item.get("totBuyQuan", 0),
+                            "totSellQuan": item.get("totSellQuan", 0),
+                            "vwap": item.get("vwap", 0.0),
+                            "open": item.get("open", 0.0),
+                            "high": item.get("high", 0.0),
+                            "low": item.get("low", 0.0),
+                            "ltp": item.get("ltp", 0.0),
+                            "volume": item.get("tradeVolume", 0)
+                        }
+            return None
+        except Exception as e:
+            print(f"ERROR fetching market depth for {symbol}: {e}")
+            return None
+
     def square_off_all(self):
         """
         Fetch all open positions and close them at MARKET price.

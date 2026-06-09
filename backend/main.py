@@ -222,10 +222,17 @@ async def ltp_broadcaster():
                 # Throttle yfinance calls to once every 10 seconds per loop
                 if not hasattr(ltp_broadcaster, "last_yf_time") or time.time() - ltp_broadcaster.last_yf_time > 10:
                     import yfinance as yf
+                    import pandas as pd
                     try:
                         raw = await asyncio.to_thread(lambda: yf.download(yf_symbols, period="1d", interval="1m", progress=False))
-                        if not raw.empty and "Close" in raw.columns:
-                            ltp_broadcaster.last_yf_data = raw["Close"].iloc[-1]
+                        if not raw.empty:
+                            if isinstance(raw.columns, pd.MultiIndex) and 'Close' in raw.columns.levels[0]:
+                                ltp_broadcaster.last_yf_data = raw['Close'].iloc[-1]
+                            elif "Close" in raw.columns:
+                                if len(yf_symbols) == 1:
+                                    ltp_broadcaster.last_yf_data = pd.Series({yf_symbols[0]: raw["Close"].iloc[-1]})
+                                else:
+                                    ltp_broadcaster.last_yf_data = raw["Close"].iloc[-1]
                         ltp_broadcaster.last_yf_time = time.time()
                     except Exception as e:
                         print(f"[YF Poll] {e}")
@@ -253,10 +260,7 @@ async def ltp_broadcaster():
                                     entry_premium = t.get("entry", 100.0)
                                     break
                         simulated_ltps[token] = entry_premium
-                    
-                    max_drift = max(0.01, simulated_ltps[token] * 0.0005)
-                    drift = random.uniform(-max_drift, max_drift)
-                    simulated_ltps[token] = max(1.0, round(simulated_ltps[token] + drift, 2))
+                    # Do not apply fake random drift; just hold the last known price
                     ltp = simulated_ltps[token]
                 else:
                     simulated_ltps[token] = ltp
@@ -618,16 +622,27 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
         raw = await asyncio.to_thread(
             lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=True)
         )
-        if not raw.empty and "Close" in raw.columns:
-            close_row = raw["Close"].iloc[-1]
-            for sym in SCREENER_UNIVERSE:
-                col = f"{sym}.NS"
-                try:
-                    val = close_row.get(col)
-                    if val is not None and str(val) != 'nan':
-                        price_map[sym] = float(val)
-                except Exception:
-                    pass
+        import pandas as pd
+        if not raw.empty:
+            close_row = None
+            if isinstance(raw.columns, pd.MultiIndex) and 'Close' in raw.columns.levels[0]:
+                close_row = raw['Close'].iloc[-1]
+            elif "Close" in raw.columns:
+                # Fallback if only 1 ticker or older yfinance
+                if len(tickers) == 1:
+                    close_row = pd.Series({tickers[0]: raw["Close"].iloc[-1]})
+                else:
+                    close_row = raw["Close"].iloc[-1]
+            
+            if close_row is not None and not close_row.empty:
+                for sym in SCREENER_UNIVERSE:
+                    col = f"{sym}.NS"
+                    try:
+                        val = close_row.get(col)
+                        if val is not None and str(val) != 'nan':
+                            price_map[sym] = float(val)
+                    except Exception:
+                        pass
     except Exception as e:
         print(f"[SmartScreener] Bulk price fetch failed: {e}. Proceeding without price filter.")
 
@@ -641,10 +656,23 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
         return {"status": "success", "results": [], "scanned": 0, "affordable": 0,
                 "message": f"No stocks found under ₹{max_price:.0f}"}
 
+    nse_trend = "Neutral"
+    try:
+        import yfinance as yf
+        nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
+        last_price = float(nifty_data.get("last_price", 0))
+        prev_close = float(nifty_data.get("previous_close", 0))
+        if last_price > prev_close:
+            nse_trend = "Bullish"
+        elif last_price < prev_close:
+            nse_trend = "Bearish"
+    except Exception as e:
+        print(f"[SmartScreener] NIFTY trend fetch failed: {e}")
+
     # Step 3: Run full analysis sequentially (throttled for AngelOne 3 req/sec)
     async def analyze_one(sym):
         try:
-            res = await stock_analyzer.analyze_stock(sym, api_client)
+            res = await stock_analyzer.analyze_stock(sym, api_client, nse_trend)
             if res and res.get("status") == "success":
                 return res
         except Exception as e:
@@ -660,8 +688,7 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
         if api_client:
             await asyncio.sleep(0.75)  # stay below 3 req/sec
 
-    # Step 4: Filter by score >= min_score (default 70 — strong intraday setup)
-    # Changed from ==100 which was too strict and returned 0 results most days
+    # Step 4: Filter by score >= min_score and actionable (VWAP/Event pass)
     top_picks = [
         {
             "symbol": r["symbol"],
@@ -671,8 +698,13 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
             "value_zone": r.get("value_zone", False),
             "signal": "BUY" if r.get("htf_trend") == "Bullish" else "SELL",
             "reason": r.get("reason", ""),
+            "total_buyers": r.get("total_buyers", 0),
+            "total_sellers": r.get("total_sellers", 0),
+            "vwap": round(r.get("vwap", 0), 2),
+            "volume_breakout": r.get("volume_breakout", False),
+            "ohol_setup": r.get("ohol_setup", "None")
         }
-        for r in results_raw if r and r.get("score", 0) >= min_score
+        for r in results_raw if r and r.get("score", 0) >= min_score and r.get("actionable", False)
     ]
     # Sort: highest score first, then lowest price
     top_picks.sort(key=lambda x: (-x["score"], x["ltp"]))
@@ -696,8 +728,21 @@ async def analyze_stock(symbol: str):
         except Exception as e:
             print(f"[AnalyzeStock] Startup-fallback broker login failed: {e}")
             
+    nse_trend = "Neutral"
+    try:
+        import yfinance as yf
+        nifty_data = await asyncio.to_thread(lambda: yf.Ticker("^NSEI").fast_info)
+        last_price = float(nifty_data.get("last_price", 0))
+        prev_close = float(nifty_data.get("previous_close", 0))
+        if last_price > prev_close:
+            nse_trend = "Bullish"
+        elif last_price < prev_close:
+            nse_trend = "Bearish"
+    except Exception as e:
+        pass
+            
     api_client = broker.smart_api if broker.session else None
-    res = await stock_analyzer.analyze_stock(symbol, api_client)
+    res = await stock_analyzer.analyze_stock(symbol, api_client, nse_trend)
     return res
 
 def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):

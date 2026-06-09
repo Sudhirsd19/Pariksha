@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   final String baseUrl = kDebugMode
-      ? "http://172.20.10.4:8000"
+      ? "http://10.0.2.2:8000"
       : "https://pariksha-production-ca52.up.railway.app";
 
   Future<Map<String, dynamic>> getStatus() async {

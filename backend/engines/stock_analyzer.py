@@ -34,7 +34,7 @@ class StockAnalyzer:
     def __init__(self):
         self.struct_engine = StructureEngine(lookback=20)
 
-    async def analyze_stock(self, symbol: str, smart_api=None) -> dict:
+    async def analyze_stock(self, symbol: str, smart_api=None, nse_trend: str = "Neutral") -> dict:
         """
         Runs full technical and fundamental analysis on a stock.
         symbol: e.g. 'RELIANCE'
@@ -54,12 +54,13 @@ class StockAnalyzer:
         if yf:
             try:
                 ticker_obj = yf.Ticker(f"{symbol}.NS")
-                hist = ticker_obj.history(period="1d", interval="1m")
+                hist = await asyncio.to_thread(lambda: ticker_obj.history(period="1d", interval="1m"))
                 if not hist.empty:
                     real_ltp = float(hist["Close"].iloc[-1])
-                if real_ltp is None or real_ltp <= 0:
+                if not real_ltp or real_ltp <= 0:
                     # fallback: fast_info
-                    real_ltp = float(ticker_obj.fast_info.get("last_price", 0) or 0)
+                    fast_info = await asyncio.to_thread(lambda: ticker_obj.fast_info)
+                    real_ltp = float(fast_info.get("last_price", 0) or 0)
             except Exception as e:
                 print(f"[StockAnalyzer] yfinance LTP fetch failed for {symbol}: {e}")
                 
@@ -94,7 +95,36 @@ class StockAnalyzer:
         if df_5m is None or df_5m.empty:
             df_5m = self._create_mock_candles(interval="FIVE_MINUTE", count=100, base_price=mock_base)
 
-        # 4. Technical checks
+        # 4. Fetch Market Depth, VWAP, OHOL from SmartAPI if available
+        market_depth = False
+        tot_buy = 0
+        tot_sell = 0
+        vwap = 0.0
+        day_open = 0.0
+        day_high = 0.0
+        day_low = 0.0
+        day_volume = 0
+        
+        if smart_api:
+            try:
+                exchangeTokens = {exchange: [token]}
+                res = await asyncio.to_thread(smart_api.getMarketData, "FULL", exchangeTokens)
+                if res and res.get('status') and res.get('data'):
+                    data_list = res.get('data', {}).get('fetched', [])
+                    for item in data_list:
+                        if item.get('symbolToken') == str(token) or item.get('symbolToken') == token:
+                            tot_buy = item.get("totBuyQuan", 0)
+                            tot_sell = item.get("totSellQuan", 0)
+                            vwap = float(item.get("vwap", 0.0))
+                            day_open = float(item.get("open", 0.0))
+                            day_high = float(item.get("high", 0.0))
+                            day_low = float(item.get("low", 0.0))
+                            day_volume = int(item.get("tradeVolume", 0))
+                            market_depth = True
+            except Exception as e:
+                print(f"[StockAnalyzer] Market Depth fetch failed for {symbol}: {e}")
+
+        # 5. Technical checks
         # Calculate EMA 50 on Daily candles
         df_1d = TechnicalIndicators.add_ema(df_1d, 50)
         last_1d = df_1d.iloc[-1]
@@ -113,7 +143,32 @@ class StockAnalyzer:
         # Displacement/OB check (BOS or swing sweeps or general bullish bias)
         displacement_pass = struct_res["bos_bullish"] or struct_res["fvg_gap"] or struct_res["sweep_low"]
 
-        # 4. Fundamental checks (using yfinance with offline cache backup)
+        # Advanced Intraday Metrics
+        avg_volume_10d = 0
+        volume_breakout = False
+        if df_1d is not None and not df_1d.empty and len(df_1d) >= 10:
+            avg_volume_10d = float(df_1d["volume"].rolling(10).mean().iloc[-1])
+            if day_volume > 0 and avg_volume_10d > 0:
+                volume_breakout = day_volume > (1.5 * avg_volume_10d)
+            else:
+                today_vol = float(df_1d["volume"].iloc[-1])
+                volume_breakout = today_vol > (1.5 * avg_volume_10d)
+                
+        vwap_alignment = "Neutral"
+        if vwap > 0:
+            if real_ltp > vwap:
+                vwap_alignment = "Bullish"
+            elif real_ltp < vwap:
+                vwap_alignment = "Bearish"
+                
+        ohol_setup = "None"
+        if day_open > 0:
+            if abs(day_open - day_low) <= (day_open * 0.001): # 0.1% tolerance
+                ohol_setup = "Open=Low (Strong Bullish)"
+            elif abs(day_open - day_high) <= (day_open * 0.001):
+                ohol_setup = "Open=High (Strong Bearish)"
+
+        # 6. Fundamental checks (using yfinance with offline cache backup)
         pe = None
         debt_to_equity = None
         promoter_pledge = 0.0
@@ -164,29 +219,69 @@ class StockAnalyzer:
         score = 0
         checklist = []
 
-        # Check 1: HTF Trend (20 points)
+        # Check 1: HTF Trend Alignment & Sector Alignment (20 points)
         htf_ok = htf_trend == "Bullish"
+        sector_ok = (nse_trend in ["Bullish", "Neutral"]) if htf_ok else (nse_trend in ["Bearish", "Neutral"])
+        
         if htf_ok:
-            score += 20
-            checklist.append({"item": "HTF Trend Alignment", "status": "Pass", "detail": f"Price > EMA50 on Daily (Bullish)", "points": 20})
+            if sector_ok:
+                score += 20
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with NIFTY: {nse_trend})", "points": 20})
+            else:
+                score += 10
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish but NIFTY is {nse_trend}", "points": 10})
         else:
-            checklist.append({"item": "HTF Trend Alignment", "status": "Fail", "detail": f"Price < EMA50 on Daily (Bearish)", "points": 0})
+            checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish Trend", "points": 0})
 
-        # Check 2: Value Zone (20 points)
-        # We prefer Discount for BUY (or Premium for SELL, but default to BUY-side scan)
+        # Check 2: Value Zone (15 points)
         zone_ok = value_zone in ["Discount", "Equilibrium"]
         if zone_ok:
-            score += 20
-            checklist.append({"item": "Value Zone Check", "status": "Pass", "detail": f"Stock is in {value_zone} zone", "points": 20})
+            score += 15
+            checklist.append({"item": "Value Zone Check", "status": "Pass", "detail": f"Stock is in {value_zone} zone", "points": 15})
         else:
             checklist.append({"item": "Value Zone Check", "status": "Fail", "detail": "Stock is in Premium zone (Expensive)", "points": 0})
 
-        # Check 3: Displacement & Structure (20 points)
+        # Check 3: Displacement & Structure (15 points)
         if displacement_pass:
-            score += 20
-            checklist.append({"item": "Displacement & OB", "status": "Pass", "detail": "Bullish Structure / FVG Gap Detected", "points": 20})
+            score += 15
+            checklist.append({"item": "Displacement & OB", "status": "Pass", "detail": "Bullish Structure / FVG Gap Detected", "points": 15})
         else:
             checklist.append({"item": "Displacement & OB", "status": "Fail", "detail": "No Bullish Structure/displacement on 5M", "points": 0})
+
+        # Check 7: VWAP Alignment (Mandatory for Actionable)
+        if vwap_alignment == "Bullish":
+            score += 15
+            checklist.append({"item": "VWAP Alignment", "status": "Pass", "detail": f"LTP ({real_ltp}) > VWAP ({vwap:.2f})", "points": 15})
+        elif vwap_alignment == "Bearish":
+            checklist.append({"item": "VWAP Alignment", "status": "Fail", "detail": f"LTP ({real_ltp}) < VWAP ({vwap:.2f})", "points": 0})
+        else:
+            checklist.append({"item": "VWAP Alignment", "status": "Warn", "detail": "VWAP data not available", "points": 5})
+
+        # Check 8: Order Book / Market Depth Ratio
+        depth_ok = False
+        if market_depth:
+            if tot_buy > (1.2 * tot_sell):
+                depth_ok = True
+                score += 10
+                checklist.append({"item": "Market Depth Ratio", "status": "Pass", "detail": f"Buyers ({tot_buy}) > 1.2x Sellers ({tot_sell})", "points": 10})
+            else:
+                checklist.append({"item": "Market Depth Ratio", "status": "Fail", "detail": f"Weak Demand (Buy:{tot_buy} Sell:{tot_sell})", "points": 0})
+        else:
+            checklist.append({"item": "Market Depth Ratio", "status": "Warn", "detail": "Depth data unavailable", "points": 0})
+
+        # Check 9: Volume Breakout
+        if volume_breakout:
+            score += 10
+            checklist.append({"item": "Volume Breakout", "status": "Pass", "detail": f"Today's Vol > 1.5x of 10D Avg", "points": 10})
+        else:
+            checklist.append({"item": "Volume Breakout", "status": "Warn", "detail": "Average or Low Volume", "points": 0})
+
+        # Check 10: OHOL Setup (Bonus 15 Points)
+        if "Bullish" in ohol_setup:
+            score += 15
+            checklist.append({"item": "OHOL Setup", "status": "Pass", "detail": ohol_setup, "points": 15})
+        elif ohol_setup != "None":
+            checklist.append({"item": "OHOL Setup", "status": "Fail", "detail": ohol_setup, "points": 0})
 
         # Check 4: Debt-to-Equity (15 points)
         # Safe if Debt to Equity < 1.0 (typical for non-banking equities)
@@ -216,8 +311,9 @@ class StockAnalyzer:
         else:
             checklist.append({"item": "Economic Event Calendar", "status": "Fail", "detail": f"{news_event}", "points": 0})
 
-        # Actionable trigger (e.g. score >= 70 and not blocked by event)
-        actionable = (score >= 70) and event_ok
+        # Actionable trigger (e.g. score >= 70, not blocked by event, and VWAP alignment passes)
+        vwap_mandatory_pass = vwap_alignment != "Bearish" # Either Bullish or Neutral/Unknown
+        actionable = (score >= 70) and event_ok and vwap_mandatory_pass
 
         return {
             "status": "success",
@@ -233,6 +329,11 @@ class StockAnalyzer:
             "debt_to_equity": debt_to_equity,
             "promoter_pledge": promoter_pledge,
             "news_event": news_event,
+            "total_buyers": tot_buy,
+            "total_sellers": tot_sell,
+            "vwap": vwap,
+            "volume_breakout": volume_breakout,
+            "ohol_setup": ohol_setup,
             "checklist": checklist
         }
 
