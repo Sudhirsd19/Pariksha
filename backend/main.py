@@ -124,7 +124,6 @@ async def startup_event():
                 print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=Rs.{risk_manager.daily_loss:.2f}")
             
             # Restore today's signals to populate in-memory list
-            from datetime import timezone, timedelta
             ist_tz = timezone(timedelta(hours=5, minutes=30))
             start_of_day_ist = datetime.now(ist_tz).replace(hour=0, minute=0, second=0, microsecond=0)
             start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
