@@ -208,13 +208,44 @@ async def ltp_broadcaster():
                 if symbol == "NIFTY": current_ltp = ltp
 
             # Fetch or simulate price for all active trade tokens (e.g. options premium)
+            # Use yfinance for real prices if Angel websocket is dead
+            yf_symbols = []
+            token_to_symbol = {}
+            with trade_manager._lock:
+                for t in trade_manager.active_trades:
+                    if t.get("instrument_type") == "EQUITY" and t.get("token") not in current_ltps:
+                        sym = t.get("symbol", "").replace("-EQ", "")
+                        yf_symbols.append(f"{sym}.NS")
+                        token_to_symbol[t.get("token")] = f"{sym}.NS"
+
+            if not is_healthy and yf_symbols:
+                # Throttle yfinance calls to once every 10 seconds per loop
+                if not hasattr(ltp_broadcaster, "last_yf_time") or time.time() - ltp_broadcaster.last_yf_time > 10:
+                    import yfinance as yf
+                    try:
+                        raw = await asyncio.to_thread(lambda: yf.download(yf_symbols, period="1d", interval="1m", progress=False))
+                        if not raw.empty and "Close" in raw.columns:
+                            ltp_broadcaster.last_yf_data = raw["Close"].iloc[-1]
+                        ltp_broadcaster.last_yf_time = time.time()
+                    except Exception as e:
+                        print(f"[YF Poll] {e}")
+            
             for token in active_trade_tokens:
                 if token in current_ltps:
                     continue
                 ltp = ws_manager.get_ltp(token) if (ws_manager and is_healthy) else 0
                 if not ltp or ltp == 0:
+                    # Fallback to yfinance if available
+                    symbol_ns = token_to_symbol.get(token)
+                    if symbol_ns and hasattr(ltp_broadcaster, "last_yf_data"):
+                        try:
+                            val = ltp_broadcaster.last_yf_data.get(symbol_ns)
+                            if val and not pd.isna(val):
+                                ltp = float(val)
+                        except: pass
+
+                if not ltp or ltp == 0:
                     if token not in simulated_ltps:
-                        # Find the initial premium entry price as a base
                         entry_premium = 100.0
                         with trade_manager._lock:
                             for t in trade_manager.active_trades:
@@ -223,7 +254,6 @@ async def ltp_broadcaster():
                                     break
                         simulated_ltps[token] = entry_premium
                     
-                    # Scaled drift: max 0.05% of the asset price per tick (e.g. max 0.06 for 120 Rs stock)
                     max_drift = max(0.01, simulated_ltps[token] * 0.0005)
                     drift = random.uniform(-max_drift, max_drift)
                     simulated_ltps[token] = max(1.0, round(simulated_ltps[token] + drift, 2))

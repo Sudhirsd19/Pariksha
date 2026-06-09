@@ -62,6 +62,9 @@ class StockAnalyzer:
                     real_ltp = float(ticker_obj.fast_info.get("last_price", 0) or 0)
             except Exception as e:
                 print(f"[StockAnalyzer] yfinance LTP fetch failed for {symbol}: {e}")
+                
+        if not real_ltp or real_ltp <= 0:
+            return {"status": "error", "message": f"Real price for {symbol} could not be fetched. Market might be closed or symbol invalid."}
 
         # 3. Fetch candles asynchronously via threads
         # We need daily candles for 50 EMA (say 80 days to be safe)
