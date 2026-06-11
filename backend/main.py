@@ -297,14 +297,17 @@ async def ltp_broadcaster():
                     simulated_ltps[token] = ltp
                 current_ltps[token] = ltp
 
-            # 2. Monitor open trades (only during market hours to prevent simulated drift from closing trades)
+            # 2. Monitor open trades (ONLY during real market hours — Mon-Fri, 9:15 AM to 3:30 PM IST)
+            # FIX C-4 (IMPROVED): Paper trading mode no longer bypasses market hour check.
+            # Previously `or is_paper_trading` caused simulated drift to trigger false SL/TP hits
+            # at any hour of the day/night. Now monitoring is strictly market-hours only for both
+            # live and paper trading modes.
             now_ist = config.get_ist_time()
             is_market_open = (
-                now_ist.weekday() < 5 and  # Monday-Friday
+                now_ist.weekday() < 5 and  # Monday-Friday only
                 dt_time(9, 15) <= now_ist.time() <= dt_time(15, 30)  # 9:15 AM to 3:30 PM IST
             )
-            # FIX C-4: Don't run trade monitoring outside market hours to prevent false SL/TP hits from drift
-            if is_market_open or is_paper_trading:
+            if is_market_open:
                 closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
                 for trade in (closed_trades or []):
                     send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
