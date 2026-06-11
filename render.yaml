@@ -6,8 +6,9 @@ services:
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     plan: free
 
-  - type: static
+  - type: web
     name: pariksha-frontend
+    env: static
     buildCommand: |
       git clone https://github.com/flutter/flutter.git -b stable --depth 1
       export PATH="$PATH:`pwd`/flutter/bin"
