@@ -13,7 +13,7 @@ class RiskManager:
         # Exposure Management
         self.long_exposure = 0
         self.short_exposure = 0
-        self.max_directional_exposure = 3 # Max 3 trades in one direction
+        self.max_directional_exposure = 5  # Default: 5 trades in one direction (overridden by Firebase)
         
         # INSTITUTIONAL LIMITS
         self.max_daily_loss_pct = 0.02 # 2%
@@ -94,7 +94,24 @@ class RiskManager:
             
         return True, "Safe"
 
+    def _refresh_dynamic_limits(self):
+        """Load dynamic limits from Firebase settings (max_directional_exposure, etc.)."""
+        try:
+            from backend.config.firebase_config import get_db
+            db = get_db()
+            if db:
+                doc = db.collection("quantum_system").document("settings").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    self.max_directional_exposure = int(data.get("max_directional_exposure", 5))
+                    self.max_trades = int(data.get("max_trades_per_day", self.max_trades))
+        except Exception:
+            pass  # Keep existing values if Firebase unavailable
+
     def can_trade(self, side=None) -> bool:
+        # Refresh dynamic limits from Firebase before each trade check
+        self._refresh_dynamic_limits()
+
         can_trade_global, reason = self.check_hard_locks()
         if not can_trade_global:
             print(f"[RiskManager] BLOCKED: {reason}")
@@ -108,10 +125,10 @@ class RiskManager:
             
         # Directional Exposure Check
         if side == "BUY" and self.long_exposure >= self.max_directional_exposure:
-            print(f"[RiskManager] BLOCKED: Max Long exposure reached")
+            print(f"[RiskManager] BLOCKED: Max Long exposure reached ({self.long_exposure}/{self.max_directional_exposure})")
             return False
         if side == "SELL" and self.short_exposure >= self.max_directional_exposure:
-            print(f"[RiskManager] BLOCKED: Max Short exposure reached")
+            print(f"[RiskManager] BLOCKED: Max Short exposure reached ({self.short_exposure}/{self.max_directional_exposure})")
             return False
             
         return True

@@ -16,6 +16,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _stopLossPoints = 25.0;
   double _maxDailyTrades = 5.0;
   double _capitalLimit = 10000.0;
+  double _maxDirectionalExposure = 5.0;
   bool _paperTrading = true;
   String _instrumentType = 'FUTURES';
   bool _fnoTrading = true;
@@ -39,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _stopLossPoints = (settings['stop_loss_points'] as num?)?.toDouble() ?? 25.0;
       _maxDailyTrades = (settings['max_daily_trades'] as num?)?.toDouble() ?? 5.0;
       _capitalLimit = (settings['capital_limit'] as num?)?.toDouble() ?? 10000.0;
+      _maxDirectionalExposure = (settings['max_directional_exposure'] as num?)?.toDouble() ?? 5.0;
       _paperTrading = settings['paper_trading'] ?? true;
       _instrumentType = settings['instrument_type'] ?? 'FUTURES';
       _fnoTrading = settings['fno_trading'] ?? true;
@@ -55,7 +57,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'take_profit_points': _takeProfitPoints.toInt(),
       'stop_loss_points': _stopLossPoints.toInt(),
       'max_daily_trades': _maxDailyTrades.toInt(),
+      'max_trades_per_day': _maxDailyTrades.toInt(),  // Backend key
       'capital_limit': _capitalLimit,
+      'max_directional_exposure': _maxDirectionalExposure.toInt(),
       'paper_trading': _paperTrading,
       'instrument_type': _instrumentType,
       'fno_trading': _fnoTrading,
@@ -167,6 +171,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _maxDailyTrades, 1, 20, 19, 
                       (val) => setState(() => _maxDailyTrades = val),
                       Icons.security_rounded, Colors.orangeAccent
+                    ),
+                    _buildCyberSlider(
+                      'MAX DIRECTIONAL EXPOSURE', 
+                      '${_maxDirectionalExposure.toInt()} TRADES/SIDE', 
+                      _maxDirectionalExposure, 1, 20, 19, 
+                      (val) => setState(() => _maxDirectionalExposure = val),
+                      Icons.compare_arrows_rounded, Colors.amberAccent
                     ),
                     _buildCyberSlider(
                       'CAPITAL LIMIT', 
