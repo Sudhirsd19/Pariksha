@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: pariksha-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+
+  - type: static
+    name: pariksha-frontend
+    buildCommand: |
+      git clone https://github.com/flutter/flutter.git -b stable --depth 1
+      export PATH="$PATH:`pwd`/flutter/bin"
+      cd frontend
+      flutter clean
+      flutter pub get
+      flutter build web
+    staticPublishPath: ./frontend/build/web
+    pullRequestPreviewsEnabled: false
