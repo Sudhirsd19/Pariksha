@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static String _resolvedBaseUrl = "https://pariksha-production-ca52.up.railway.app";
+  static String _resolvedBaseUrl = "https://pariksha-backend-lar4.onrender.com";
   
   String get baseUrl => _resolvedBaseUrl;
 
@@ -29,7 +29,7 @@ class ApiService {
         debugPrint("[ApiService] Local emulator backend not reachable. Falling back to production Railway URL. Error: $e");
       }
     }
-    _resolvedBaseUrl = "https://pariksha-production-ca52.up.railway.app";
+    _resolvedBaseUrl = "https://pariksha-backend-lar4.onrender.com";
     debugPrint("[ApiService] Using production backend at $_resolvedBaseUrl");
   }
 
