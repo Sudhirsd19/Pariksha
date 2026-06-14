@@ -991,6 +991,43 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   }
 
   void _executeTrade(BuildContext context, TradingProvider provider, String symbol, String side, double ltp) {
+    // ── MARKET HOURS GUARD (IST) ──────────────────────────────────────────
+    final nowIst = DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 30));
+    final weekday = nowIst.weekday; // 1=Mon … 5=Fri, 6=Sat, 7=Sun
+    final t = TimeOfDay(hour: nowIst.hour, minute: nowIst.minute);
+    final tMins = t.hour * 60 + t.minute;
+    const marketOpen   = 9 * 60 + 15;  // 9:15 AM
+    const entryCutoff  = 14 * 60 + 30; // 2:30 PM — no new intraday entries
+
+    String? blockedReason;
+    if (weekday >= 6) {
+      blockedReason = 'Market closed today (${weekday == 6 ? 'Saturday' : 'Sunday'}). NSE trades Mon–Fri only.';
+    } else if (tMins < marketOpen) {
+      blockedReason = 'Market not open yet. NSE opens at 9:15 AM IST.';
+    } else if (tMins >= entryCutoff) {
+      blockedReason = 'Entry blocked after 2:30 PM IST. Auto square-off is at 3:10 PM — insufficient time for a new intraday position.';
+    }
+
+    if (blockedReason != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.access_time_rounded, color: Colors.white, size: 16),
+              const SizedBox(width: 10),
+              Expanded(child: Text(blockedReason, style: const TextStyle(fontWeight: FontWeight.bold))),
+            ],
+          ),
+          backgroundColor: const Color(0xFF8B1A1A),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     if (ltp <= 0) ltp = 100.0;
     final double capitalLimit = (provider.systemSettings['capital_limit'] as num?)?.toDouble() ?? 10000.0;
     int maxQty = (capitalLimit / ltp).floor();
@@ -1005,7 +1042,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     // SL/TP values (2% SL, 4% TP — same as backend)
     final double sl = side == 'BUY' ? ltp * 0.98 : ltp * 1.02;
     final double tp = side == 'BUY' ? ltp * 1.04 : ltp * 0.96;
-    const double charges = 60.0;
 
     showDialog(
       context: context,
@@ -1014,8 +1050,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
           builder: (context, setS) {
             final double totalValue = selectedQty * ltp;
             final bool isValid = selectedQty > 0 && selectedQty <= maxQty;
-            final double slLoss   = (selectedQty * (ltp - sl).abs()) + charges;
-            final double tpProfit = (selectedQty * (tp - ltp).abs()) - charges;
+            // Recalculate charges based on current qty selection
+            final double estCharges = double.parse(((ltp * selectedQty * 0.00035) + 20).toStringAsFixed(2));
+            final double slLoss   = (selectedQty * (ltp - sl).abs()) + estCharges;
+            final double tpProfit = (selectedQty * (tp - ltp).abs()) - estCharges;
 
             void setQtyPercent(double pct) {
               final int q = ((capitalLimit * pct) / ltp).floor();
@@ -1187,7 +1225,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           _infoCell('TOTAL VALUE', '₹${totalValue.toStringAsFixed(0)}', Colors.white),
-                          _infoCell('CHARGES', '₹${charges.toStringAsFixed(0)}', Colors.white38),
+                          _infoCell('CHARGES', '~₹${estCharges.toStringAsFixed(0)}', Colors.white38),
                           _infoCell('SL', '₹${sl.toStringAsFixed(2)}', Colors.redAccent),
                           _infoCell('TARGET', '₹${tp.toStringAsFixed(2)}', Colors.greenAccent),
                         ],

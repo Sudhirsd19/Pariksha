@@ -802,6 +802,37 @@ def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, p
 
 @app.post("/execute-stock-trade")
 async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_tasks: BackgroundTasks = None):
+    # ── MARKET HOURS GUARD ─────────────────────────────────────────────────
+    # Intraday entries only allowed: Mon-Fri, 9:15 AM – 2:30 PM IST
+    # After 2:30 PM: less than 40 min left → auto sq-off at 3:10 PM → bad RRR
+    ist_tz_guard = timezone(timedelta(hours=5, minutes=30))
+    now_guard = datetime.now(ist_tz_guard)
+    market_open  = dt_time(9, 15)
+    entry_cutoff = dt_time(14, 30)   # No new entries after 2:30 PM
+    market_close = dt_time(15, 30)
+    current_time = now_guard.time()
+    weekday      = now_guard.weekday()  # 0=Mon … 4=Fri, 5=Sat, 6=Sun
+
+    if weekday >= 5:  # Saturday or Sunday
+        return {
+            "status": "error",
+            "message": f"Market closed on {'Saturday' if weekday == 5 else 'Sunday'}. NSE trades Mon–Fri only."
+        }
+    if current_time < market_open:
+        return {
+            "status": "error",
+            "message": f"Market not yet open. NSE opens at 9:15 AM IST. Current time: {now_guard.strftime('%I:%M %p')} IST."
+        }
+    if current_time >= entry_cutoff:
+        return {
+            "status": "error",
+            "message": (
+                f"Entry blocked after 2:30 PM IST. Current time: {now_guard.strftime('%I:%M %p')} IST. "
+                "Auto square-off is at 3:10 PM — not enough time for a new intraday position."
+            )
+        }
+    # ───────────────────────────────────────────────────────────────────────
+
     # Check if Equity trading is enabled in settings
     settings = await asyncio.to_thread(db_manager.get_settings) or {}
     equity_trading = settings.get("equity_trading", True)
@@ -812,6 +843,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
     side = side.upper()
     if side not in ["BUY", "SELL"]:
         return {"status": "error", "message": "Invalid transaction side"}
+
         
     # Daily Trade Check: prevent trading the same stock if it has already been traded AND CLOSED today
     # FIX: Must filter by TODAY's IST date — without this, yesterday's closed trades lock today's entries
