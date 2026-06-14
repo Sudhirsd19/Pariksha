@@ -341,6 +341,8 @@ class TradeManager:
                         "exit_price": exit_price,
                         "exit_time": exit_time,
                         "pnl": net_pnl,
+                        "charges": round(charges, 2),   # Real AngelOne charges for this trade
+                        "gross_pnl": round(pnl, 2),     # PnL before charges
                         "result": "TARGET" if hit_tp else "STOPLOSS"
                     }
                     
@@ -432,6 +434,8 @@ class TradeManager:
                     "exit_price": exit_price,
                     "exit_time": exit_time,
                     "pnl": net_pnl,
+                    "charges": round(charges, 2),   # Real AngelOne charges for this trade
+                    "gross_pnl": round(pnl, 2),     # PnL before charges
                     "result": "SQUARE_OFF"
                 }
                 

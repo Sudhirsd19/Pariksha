@@ -12,6 +12,23 @@ class LogsScreen extends StatefulWidget {
 
 class _LogsScreenState extends State<LogsScreen> {
   DateTime? _selectedDate;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-fetch logs when screen opens — wakes Render + loads SQLite fallback
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadLogs();
+    });
+  }
+
+  Future<void> _loadLogs() async {
+    setState(() => _isLoading = true);
+    final provider = Provider.of<TradingProvider>(context, listen: false);
+    await provider.fetchLogs();
+    if (mounted) setState(() => _isLoading = false);
+  }
 
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
@@ -94,6 +111,26 @@ class _LogsScreenState extends State<LogsScreen> {
       body: Stack(
         children: [
           _buildMeshBackground(),
+          if (_isLoading)
+            const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Colors.cyanAccent, strokeWidth: 2),
+                  SizedBox(height: 16),
+                  Text(
+                    'FETCHING MISSION LOGS...',
+                    style: TextStyle(
+                      color: Colors.white24,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
           CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [
@@ -134,7 +171,9 @@ class _LogsScreenState extends State<LogsScreen> {
                   IconButton(
                     icon: const Icon(Icons.sync_rounded, color: Colors.cyanAccent),
                     tooltip: 'Sync',
-                    onPressed: () => provider.fetchLogs(),
+                    onPressed: () async {
+                      await _loadLogs();
+                    },
                   ),
                 ],
               ),
@@ -333,7 +372,15 @@ class _LogsScreenState extends State<LogsScreen> {
                             _vLine(),
                             Expanded(child: _badge('EXIT', '₹${log['exit_price'] ?? '-'}', Colors.orangeAccent)),
                             _vLine(),
-                            Expanded(child: _badge('CHARGES', '₹60', Colors.white38)),
+                            Expanded(
+                              child: _badge(
+                                'CHARGES',
+                                log['charges'] != null
+                                    ? '₹${(log['charges'] as num).toStringAsFixed(2)}'
+                                    : '--',
+                                Colors.white38,
+                              ),
+                            ),
                           ]
                         : [
                             Expanded(child: _badge('ENTRY', '₹${log['entry'] ?? '-'}', Colors.cyanAccent)),
