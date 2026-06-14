@@ -1013,6 +1013,7 @@ async def trading_loop():
             if today_date != last_reset_date:
                 print(f"[Reset] Date changed from {last_reset_date} to {today_date}. Resetting daily risk stats.")
                 risk_manager.reset_daily()
+                cooldown_engine.reset()  # FIX ISSUE-4: Reset cooldown so new day starts fresh
                 last_reset_date = today_date
                 gap_scan_done = False  # Allow gap scan again on new day
 
@@ -1212,17 +1213,37 @@ async def trading_loop():
                             ws_manager.subscribe_token(trade_token, 2)
                             
                         # Save options metadata for Synthetic Exits
+                        # Capture underlying SL/TP distances BEFORE overwriting signal_data['sl'/'tp']
+                        underlying_entry_val = signal_data['entry']
+                        underlying_sl_val    = signal_data['sl']
+                        underlying_tp_val    = signal_data['tp']
+                        sl_dist = abs(underlying_entry_val - underlying_sl_val)  # index points to SL
+                        tp_dist = abs(underlying_tp_val   - underlying_entry_val) # index points to TP
+
+                        # ATM delta ≈ 0.45 — convert underlying points to approximate premium movement
+                        ATM_DELTA = 0.45
+                        premium_sl = round(max(option_premium * 0.5, option_premium - sl_dist * ATM_DELTA), 2)
+                        premium_tp = round(option_premium + tp_dist * ATM_DELTA, 2)
+
                         signal_data.update({
                             'instrument_type': "OPTIONS",
                             'original_signal': side,
                             'underlying_token': token,
-                            'underlying_entry': signal_data['entry'],
-                            'underlying_sl': signal_data['sl'],
-                            'underlying_tp': signal_data['tp'],
-                            'option_premium': option_premium,
+                            'underlying_entry': underlying_entry_val,
+                            'underlying_sl':    underlying_sl_val,
+                            'underlying_tp':    underlying_tp_val,
+                            'option_premium':   option_premium,
+                            # FIX BUG-10: Override sl/tp with PREMIUM levels for correct frontend display
+                            # Exit logic still uses underlying_sl/underlying_tp — these are display only
+                            'sl': premium_sl,
+                            'tp': premium_tp,
                         })
                     else:
                         qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol)
+                        # FIX BUG-4: Validate qty before proceeding — zero qty would send invalid order
+                        if qty <= 0:
+                            print(f"[SizingError] Calculated qty=0 for {symbol} (entry={signal_data['entry']}, sl={signal_data['sl']}). Skipping trade.")
+                            continue
                         signal_data.update({
                             'instrument_type': "FUTURES",
                             'original_signal': side,

@@ -151,6 +151,11 @@ class RiskManager:
             # Equities do not trade in lots
             qty = raw_quantity
             if qty < 1: qty = 1
+            # FIX ISSUE-1: Cap qty so total capital deployed never exceeds available capital
+            # e.g. entry=200, tight SL=199.9 => raw_qty=10000 on Rs.10k capital — dangerous!
+            if entry > 0:
+                max_qty_by_capital = int(self.capital / entry)
+                qty = min(qty, max(1, max_qty_by_capital))
             return qty
             
         # Get correct lot size from token_manager (2026: Nifty=65, BankNifty=30)

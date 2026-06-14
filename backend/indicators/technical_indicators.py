@@ -9,11 +9,16 @@ class TechnicalIndicators:
 
     @staticmethod
     def add_rsi(df: pd.DataFrame, length: int = 14) -> pd.DataFrame:
+        """Wilder's RSI — matches TradingView / standard charting tools."""
         delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
-        rs = gain / loss
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        # Wilder's smoothing: EWM with alpha = 1/length, adjust=False
+        avg_gain = gain.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
         df['RSI'] = 100 - (100 / (1 + rs))
+        df['RSI'] = df['RSI'].fillna(50)  # Neutral fallback for initial NaN
         return df
 
     @staticmethod
@@ -35,20 +40,28 @@ class TechnicalIndicators:
 
     @staticmethod
     def add_adx(df: pd.DataFrame, length: int = 14) -> pd.DataFrame:
-        plus_dm = df['high'].diff()
-        minus_dm = df['low'].diff()
-        plus_dm[plus_dm < 0] = 0
-        minus_dm[minus_dm > 0] = 0
-        
-        tr = pd.concat([df['high'] - df['low'], 
-                        np.abs(df['high'] - df['close'].shift()), 
-                        np.abs(df['low'] - df['close'].shift())], axis=1).max(axis=1)
-        atr = tr.rolling(window=length).mean()
-        
-        plus_di = 100 * (plus_dm.rolling(window=length).mean() / atr)
-        minus_di = 100 * (np.abs(minus_dm).rolling(window=length).mean() / atr)
-        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
-        df['ADX'] = dx.rolling(window=length).mean()
+        """Wilder's ADX — proper +DM/-DM directional comparison."""
+        up_move   = df['high'] - df['high'].shift(1)
+        down_move = df['low'].shift(1) - df['low']
+
+        plus_dm  = pd.Series(np.where((up_move > down_move) & (up_move > 0),   up_move,   0.0), index=df.index)
+        minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+
+        tr = pd.concat([
+            df['high'] - df['low'],
+            np.abs(df['high'] - df['close'].shift(1)),
+            np.abs(df['low']  - df['close'].shift(1))
+        ], axis=1).max(axis=1)
+
+        # Wilder's smoothing
+        atr      = tr.ewm(alpha=1/length,       min_periods=length, adjust=False).mean()
+        plus_di  = 100 * plus_dm.ewm(alpha=1/length,  min_periods=length, adjust=False).mean() / atr
+        minus_di = 100 * minus_dm.ewm(alpha=1/length, min_periods=length, adjust=False).mean() / atr
+
+        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)
+        df['ADX']      = dx.ewm(alpha=1/length, min_periods=length, adjust=False).mean().fillna(0)
+        df['PLUS_DI']  = plus_di.fillna(0)
+        df['MINUS_DI'] = minus_di.fillna(0)
         return df
 
     @staticmethod

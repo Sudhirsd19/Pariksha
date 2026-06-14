@@ -16,24 +16,32 @@ class SignalEngine:
 
     def detect_market_phase(self, df):
         """Classify market phase: Trending, Expansion, Consolidation."""
-        atr = df['high'].rolling(14).max() - df['low'].rolling(14).min()
-        atr_avg = atr.rolling(50).mean().iloc[-1]
-        current_atr = atr.iloc[-1]
-        
-        # Consolidation check: Narrow ATR + overlapping candles
+        # True ATR: max(H-L, |H-prev_C|, |L-prev_C|) — NOT rolling range
+        import pandas as pd
+        hl       = df['high'] - df['low']
+        hc       = (df['high'] - df['close'].shift(1)).abs()
+        lc       = (df['low']  - df['close'].shift(1)).abs()
+        true_range = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+        atr_14   = true_range.rolling(14).mean()
+        atr_avg  = atr_14.rolling(50).mean().iloc[-1]
+        current_atr = atr_14.iloc[-1]
+
+        if pd.isna(current_atr) or pd.isna(atr_avg) or atr_avg == 0:
+            return "NEUTRAL"
+
+        # Consolidation: ATR significantly below its own average
         if current_atr < (atr_avg * 0.7):
             return "CONSOLIDATION"
-        
+
         # Trending vs Expansion
-        # Expansion is sudden move, Trending is sustained
         sma20 = df['close'].rolling(20).mean().iloc[-1]
         sma50 = df['close'].rolling(50).mean().iloc[-1]
-        
+
         if abs(df['close'].iloc[-1] - sma20) > (current_atr * 2):
             return "EXPANSION"
         elif (df['close'].iloc[-1] > sma20 > sma50) or (df['close'].iloc[-1] < sma20 < sma50):
             return "TRENDING"
-        
+
         return "NEUTRAL"
 
     def get_daily_bias(self, current_price, daily_open, pdh, pdl):

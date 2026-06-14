@@ -28,6 +28,72 @@ class TradeManager:
         self.gross_profit = 0.0
         self.gross_loss = 0.0
 
+    # ------------------------------------------------------------------
+    # AngelOne Real Brokerage Calculator
+    # Rates source: angelone.in charges page (verified June 2026)
+    # ------------------------------------------------------------------
+    def _calculate_charges(self, trade, exit_price):
+        """
+        Returns approximate AngelOne brokerage + statutory charges
+        for a complete round-trip (entry + exit).
+
+        Instrument types handled:
+          EQUITY   — Intraday NSE Equity
+          FUTURES  — F&O Futures (NSE)
+          OPTIONS  — F&O Options Buying (NSE)
+        """
+        instrument  = trade.get("instrument_type", "EQUITY").upper()
+        entry_price = trade["entry"]
+        qty         = trade["qty"]
+
+        # ── Turnover ───────────────────────────────────────────────────
+        # For options we use PREMIUM turnover; for futures/equity, NOTIONAL
+        buy_turnover  = entry_price * qty   # buy leg
+        sell_turnover = exit_price  * qty   # sell leg
+
+        # ── 1. BROKERAGE ───────────────────────────────────────────────
+        if instrument == "EQUITY":
+            # AngelOne: lower of ₹20 or 0.1% per executed order
+            brokerage_buy  = min(20.0, buy_turnover  * 0.001)
+            brokerage_sell = min(20.0, sell_turnover * 0.001)
+        else:
+            # Futures & Options: flat ₹20 per executed order
+            brokerage_buy  = 20.0
+            brokerage_sell = 20.0
+        brokerage = brokerage_buy + brokerage_sell
+
+        # ── 2. STT (Securities Transaction Tax) ────────────────────────
+        # Charged on SELL side only for intraday/F&O
+        if instrument == "EQUITY":
+            stt = sell_turnover * 0.00025          # 0.025% on sell
+        elif instrument == "FUTURES":
+            stt = sell_turnover * 0.0001           # 0.01% on sell
+        else:  # OPTIONS
+            stt = sell_turnover * 0.0005           # 0.05% on sell premium
+
+        # ── 3. EXCHANGE TRANSACTION CHARGES (NSE) ──────────────────────
+        if instrument == "EQUITY":
+            txn = (buy_turnover + sell_turnover) * 0.0000345  # 0.00345%
+        elif instrument == "FUTURES":
+            txn = (buy_turnover + sell_turnover) * 0.0000188  # 0.00188%
+        else:  # OPTIONS — charged on premium turnover
+            txn = (buy_turnover + sell_turnover) * 0.00053    # 0.053%
+
+        # ── 4. SEBI FEES ───────────────────────────────────────────────
+        sebi = (buy_turnover + sell_turnover) * 0.000001      # ₹10 per crore
+
+        # ── 5. GST ─────────────────────────────────────────────────────
+        gst = (brokerage + txn + sebi) * 0.18
+
+        # ── 6. STAMP DUTY (on BUY side only) ───────────────────────────
+        if instrument == "FUTURES":
+            stamp = buy_turnover * 0.00002         # 0.002%
+        else:  # EQUITY intraday & OPTIONS
+            stamp = buy_turnover * 0.00003         # 0.003%
+
+        total = brokerage + stt + txn + sebi + gst + stamp
+        return round(total, 2)
+
     def load_state(self):
         """Restore open trades from local SQLite on startup."""
         with self._lock:
@@ -240,8 +306,8 @@ class TradeManager:
                         else:
                             pnl = (trade["entry"] - exit_price) * trade["qty"]
                     
-                    # Approximate Brokerage & STT for NIFTY F&O
-                    charges = 60.0 
+                    # Real AngelOne brokerage + statutory charges
+                    charges = self._calculate_charges(trade, exit_price)
                     net_pnl = pnl - charges
 
                     # Update Stats
@@ -251,10 +317,10 @@ class TradeManager:
                     
                     if net_pnl > 0:
                         self.winning_trades += 1
-                        self.gross_profit += net_pnl
+                        self.gross_profit += pnl   # Store GROSS PnL (before charges)
                     else:
                         self.losing_trades += 1
-                        self.gross_loss += abs(net_pnl)
+                        self.gross_loss += abs(pnl) # Store GROSS loss (before charges)
                         
                     self.pnl_history.append(self.realized_pnl)
                     
@@ -335,7 +401,7 @@ class TradeManager:
                     else:
                         pnl = (trade["entry"] - exit_price) * trade["qty"]
                     
-                charges = 60.0 
+                charges = self._calculate_charges(trade, exit_price)
                 net_pnl = pnl - charges
 
                 self.realized_pnl += net_pnl
@@ -344,10 +410,10 @@ class TradeManager:
                 
                 if net_pnl > 0:
                     self.winning_trades += 1
-                    self.gross_profit += net_pnl
+                    self.gross_profit += pnl   # Store GROSS PnL (before charges)
                 else:
                     self.losing_trades += 1
-                    self.gross_loss += abs(net_pnl)
+                    self.gross_loss += abs(pnl) # Store GROSS loss (before charges)
 
                 self.pnl_history.append(self.realized_pnl)
                 

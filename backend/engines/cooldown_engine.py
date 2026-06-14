@@ -16,3 +16,7 @@ class CooldownEngine:
 
     def update_last_trade(self):
         self.last_trade_time = datetime.now()
+
+    def reset(self):
+        """Reset cooldown on new trading day so day-start isn't blocked."""
+        self.last_trade_time = None
