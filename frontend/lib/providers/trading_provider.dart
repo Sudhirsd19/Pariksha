@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 
 class TradingProvider with ChangeNotifier {
@@ -175,6 +176,30 @@ class TradingProvider with ChangeNotifier {
           }
           if (jsonData['daily_loss'] != null) {
             _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
+          }
+          
+          // Watchlist live update
+          if (jsonData['symbol_ltps'] != null) {
+            Map<String, dynamic> symLtps = jsonData['symbol_ltps'];
+            bool wUpdated = false;
+            for (int i = 0; i < _watchlist.length; i++) {
+              String sym = _watchlist[i]['symbol'];
+              String cleanSym = sym.replaceAll('-EQ', '');
+              if (symLtps.containsKey(cleanSym)) {
+                double newLtp = (symLtps[cleanSym] as num).toDouble();
+                double oldLtp = _watchlist[i]['ltp'] ?? 0.0;
+                if (oldLtp != newLtp) {
+                   _watchlist[i]['ltp'] = newLtp;
+                   wUpdated = true;
+                   
+                   // Background re-eval if price moves > 0.5%
+                   if (oldLtp > 0 && (newLtp - oldLtp).abs() / oldLtp > 0.005) {
+                      _triggerSilentBackgroundReval(_watchlist[i]);
+                   }
+                }
+              }
+            }
+            if (wUpdated && !_isDisposed) notifyListeners();
           }
 
           // Throttle UI updates to 10Hz to save CPU
@@ -616,10 +641,11 @@ class TradingProvider with ChangeNotifier {
 
   void _startWatchlistRefreshTimer() {
     if (_isDisposed) return; // FIX: Don't start timer if already disposed
-    _watchlistRefreshTimer =
-        Timer.periodic(const Duration(seconds: 60), (timer) {
-      if (!_isDisposed) refreshWatchlist();
-    });
+    // FIX: Disabled HTTP polling for Watchlist. Watchlist now updates via WebSocket `symbol_ltps` instantly.
+    // _watchlistRefreshTimer =
+    //     Timer.periodic(const Duration(seconds: 60), (timer) {
+    //   if (!_isDisposed) refreshWatchlist();
+    // });
   }
 
   Future<void> refreshWatchlist() async {
@@ -634,58 +660,50 @@ class TradingProvider with ChangeNotifier {
           List<Map<String, dynamic>>.from(_watchlist);
       bool changesMade = false;
 
-      // FIX M-8: Was using Future.wait() which fired all requests simultaneously.
-      // AngelOne rate limit is 3 req/sec; each analyzeStock() makes 2 API calls.
       // Now processes sequentially with a 600ms gap to stay safely under the limit.
       for (final item in updatedList) {
-        final symbol = item['symbol'];
-        if (symbol == null) continue;
-        try {
-          final double currentLtp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
-          final res = await _apiService.analyzeStock(symbol, ltp: currentLtp);
-          if (res != null && res['status'] == 'success') {
-            final double newLtp = (res['ltp'] as num?)?.toDouble() ?? 0.0;
-            final int newScore = res['score'] ?? 0;
-            final bool actionable = res['actionable'] ?? false;
-
-            String recommendation = res['recommendation'] ?? "NEUTRAL";
-
-            final idx = updatedList.indexWhere((i) => i['symbol'] == symbol);
-            if (idx != -1) {
-              final oldItem = updatedList[idx];
-              if (oldItem['ltp'] != newLtp ||
-                  oldItem['score'] != newScore ||
-                  oldItem['recommendation'] != recommendation) {
-                updatedList[idx] = {
-                  ...oldItem,
-                  "ltp": newLtp,
-                  "score": newScore,
-                  "recommendation": recommendation,
-                  "actionable": actionable,
-                  "timestamp": DateTime.now().millisecondsSinceEpoch,
-                };
-                changesMade = true;
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint("Error fetching refresh for $symbol: $e");
-        }
-        // Delay between stocks to respect AngelOne 3 req/sec rate limit
+        if (_isDisposed) break;
+        await _triggerSilentBackgroundReval(item);
         await Future.delayed(const Duration(milliseconds: 600));
+        changesMade = true;
       }
 
       if (changesMade) {
         await _firestore
             .collection('quantum_system')
             .doc('watchlist')
-            .set({"items": updatedList});
+            .set({"items": _watchlist});
       }
     } catch (e) {
       debugPrint("Error refreshing watchlist: $e");
     } finally {
       _isRefreshingWatchlist = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _triggerSilentBackgroundReval(Map<String, dynamic> item) async {
+    try {
+        // Don't send ltp if we want backend to fetch fresh or use its own websocket!
+        final response = await http.get(Uri.parse('http://127.0.0.1:8000/analyze-stock?symbol=${item['symbol']}'));
+        if (response.statusCode == 200) {
+          final result = jsonDecode(response.body);
+          if (result['status'] == 'success') {
+            item['score'] = result['score'];
+            item['recommendation'] = result['recommendation'];
+            item['actionable'] = result['actionable'];
+            item['points'] = result['points'];
+            item['checklist'] = result['checklist'];
+            item['ohlc'] = result['ohlc'];
+            item['volume_breakout'] = result['volume_breakout'];
+            item['ohol_setup'] = result['ohol_setup'];
+            item['vwap'] = result['vwap'];
+            item['ltp'] = result['ltp']; // Ensure LTP matches the evaluated price
+            if (!_isDisposed) notifyListeners();
+          }
+        }
+    } catch (e) {
+        debugPrint("Silent reval failed for ${item['symbol']}: $e");
     }
   }
 }

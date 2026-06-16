@@ -176,8 +176,9 @@ class SignalEngine:
         # 3. 15-Min ORB Filter
         orb_passed = True
         try:
-            today_str = datetime.datetime.now(ist_tz).strftime("%Y-%m-%d")
-            if 'time' in mtf_df.columns:
+            if 'time' in mtf_df.columns and not mtf_df.empty:
+                latest_time = pd.to_datetime(mtf_df['time'].iloc[-1])
+                today_str = latest_time.strftime("%Y-%m-%d")
                 # Normalize time column to string safely (handles both str and datetime types)
                 time_col_str = mtf_df['time'].astype(str)
                 today_candles = mtf_df[time_col_str.str.startswith(today_str)]
@@ -234,9 +235,13 @@ class SignalEngine:
         structure_data = self.struct_engine.analyze(df_15m)  # FIX: reuse from __init__
 
         # PDH/PDL: filter df_1h to only yesterday's candles using the 'time' column
-        from datetime import timezone, timedelta, datetime as _dt
-        _ist = timezone(timedelta(hours=5, minutes=30))
-        _today_str = _dt.now(_ist).strftime("%Y-%m-%d")
+        if 'time' in df_1h.columns and not df_1h.empty:
+            _latest_time = pd.to_datetime(df_1h['time'].iloc[-1])
+            _today_str = _latest_time.strftime("%Y-%m-%d")
+        else:
+            from datetime import timezone, timedelta, datetime as _dt
+            _ist = timezone(timedelta(hours=5, minutes=30))
+            _today_str = _dt.now(_ist).strftime("%Y-%m-%d")
 
         if 'time' in df_1h.columns:
             # Normalize to string in case column is datetime type

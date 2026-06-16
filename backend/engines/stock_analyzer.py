@@ -71,7 +71,7 @@ class StockAnalyzer:
     def __init__(self):
         self.struct_engine = StructureEngine(lookback=20)
 
-    async def analyze_stock(self, symbol: str, smart_api=None, index_trends = None, provided_ltp: float = 0.0) -> dict:
+    async def analyze_stock(self, symbol: str, smart_api=None, index_trends=None, provided_ltp: float=0.0, live_ltp_dict: dict=None) -> dict:
         """
         Runs full technical and fundamental analysis on a stock.
         symbol: e.g. 'RELIANCE'
@@ -121,6 +121,8 @@ class StockAnalyzer:
         if not real_ltp or real_ltp <= 0:
             if provided_ltp > 0:
                 real_ltp = provided_ltp
+            elif live_ltp_dict and token in live_ltp_dict and live_ltp_dict[token] > 0:
+                real_ltp = live_ltp_dict[token]
                 
         if not real_ltp or real_ltp <= 0:
             return {"status": "error", "message": f"Real price for {symbol} could not be fetched. Market might be closed or symbol invalid."}

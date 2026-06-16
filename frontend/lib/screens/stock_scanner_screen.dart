@@ -805,7 +805,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                   final bool warn = status == 'Warn';
                   final String name = item['item'] ?? "";
                   final String detail = item['detail'] ?? "";
-                  final int points = item['points'] ?? 0;
+                  final int points = (item['points'] as num?)?.toInt() ?? 0;
 
                   final IconData icon = pass
                       ? Icons.check_circle_outline_rounded
@@ -1485,7 +1485,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     GestureDetector(
                       onTap: () {
                         _searchController.text = symbol;
-                        _triggerScan(symbol, ltp: ltp);
+                        _triggerScan(symbol);
                       },
                       child: Row(
                         children: [

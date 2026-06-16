@@ -43,6 +43,7 @@ from backend.safety.health_monitor import health_monitor
 from backend.utils.persistence_manager import persistence_manager
 from backend.engines.correlation_engine import CorrelationEngine
 from backend.engines.stock_analyzer import StockAnalyzer
+from backend.engines.auto_router_engine import AutoRouterEngine
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="QuantumIndex Algo-Trading System")
@@ -93,6 +94,7 @@ signal_engine = SignalEngine()
 correlation_engine = CorrelationEngine()
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
 stock_analyzer = StockAnalyzer()  # M-4 Fix: Instantiate globally
+auto_router = AutoRouterEngine()  # Dynamic Engine selection based on ADX
 
 @app.on_event("startup")
 async def startup_event():
@@ -240,15 +242,42 @@ async def ltp_broadcaster():
                 current_ltps[token] = ltp
                 if symbol == "NIFTY": current_ltp = ltp
 
-            # Fetch or simulate price for all active trade tokens (e.g. options premium)
-            # Use yfinance for real prices if Angel websocket is dead
+            # Fetch or simulate price for all active trade tokens and watchlist tokens
             yf_symbols = []
             token_to_symbol = {}
+            
+            # Watchlist tokens
+            try:
+                watchlist_doc = await asyncio.to_thread(db_manager.db.collection('quantum_system').doc('watchlist').get)
+                if watchlist_doc.exists:
+                    w_items = watchlist_doc.to_dict().get('items', [])
+                    for item in w_items:
+                        w_sym = item.get('symbol', '').replace("-EQ", "")
+                        w_info = token_manager.get_stock_info(w_sym)
+                        if w_info:
+                            w_tok = w_info['token']
+                            if w_tok not in current_ltps:
+                                l = ws_manager.get_ltp(w_tok) if (ws_manager and is_healthy) else 0
+                                if l and l > 0:
+                                    current_ltps[w_tok] = l
+                                else:
+                                    # Use previous logic but commented as per user request? No, this is NEW logic. 
+                                    if w_sym + ".NS" not in yf_symbols:
+                                        yf_symbols.append(w_sym + ".NS")
+                                    token_to_symbol[w_tok] = w_sym + ".NS"
+            except Exception as e:
+                pass
+                
             with trade_manager._lock:
                 for t in trade_manager.active_trades:
                     if t.get("instrument_type") == "EQUITY" and t.get("token") not in current_ltps:
                         sym = t.get("symbol", "").replace("-EQ", "")
-                        yf_symbols.append(f"{sym}.NS")
+                        # OLD LOGIC START (COMMENTED OUT)
+                        # yf_symbols.append(f"{sym}.NS")
+                        # token_to_symbol[t.get("token")] = f"{sym}.NS"
+                        # OLD LOGIC END
+                        if sym + ".NS" not in yf_symbols:
+                            yf_symbols.append(sym + ".NS")
                         token_to_symbol[t.get("token")] = f"{sym}.NS"
 
             if not is_healthy and yf_symbols:
@@ -333,10 +362,18 @@ async def ltp_broadcaster():
                 if signals:
                     ws_sentiment = "Bullish" if signals[-1].get('signal') == "BUY" else "Bearish"
                     ws_sentiment_score = 0.8 if ws_sentiment == "Bullish" else 0.2
+                    
+                # Create symbol-based ltps for watchlist
+                symbol_ltps = {}
+                for s_name, s_info in token_manager.stocks_index.items():
+                    tok = s_info.get("token")
+                    if tok in current_ltps:
+                        symbol_ltps[s_name] = current_ltps[tok]
                 
                 payload = json.dumps({
                     "ltp": current_ltp,
                     "ltps": current_ltps,
+                    "symbol_ltps": symbol_ltps,
                     "connected": True,
                     "sentiment": ws_sentiment,
                     "sentiment_score": ws_sentiment_score,
@@ -790,6 +827,20 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
         "min_score_used": min_score,
     }
 
+@app.get("/api/scanner/scan")
+async def scan_stock_signals(symbol: str):
+    """
+    Returns signals for a stock, automatically routed through 
+    the best engine based on trend strength (ADX).
+    """
+    symbol = symbol.upper()
+    if not symbol.endswith(".NS"):
+        symbol += ".NS"
+    
+    # Run data fetch and signal generation in a background thread to prevent blocking the async loop
+    result = await asyncio.to_thread(auto_router.get_signals_for_symbol, symbol)
+    return result
+
 @app.get("/analyze-stock")
 async def analyze_stock(symbol: str, ltp: float = 0.0):
     symbol = symbol.upper()
@@ -816,7 +867,8 @@ async def analyze_stock(symbol: str, ltp: float = 0.0):
         print(f"[AnalyzeStock] Trend fetch failed for index {index_ticker}: {e}")
             
     api_client = broker.smart_api if broker.session else None
-    res = await stock_analyzer.analyze_stock(symbol, api_client, index_trends, provided_ltp=ltp)
+    live_ltp_dict = ws_manager.ltp_data if ws_manager else {}
+    res = await stock_analyzer.analyze_stock(symbol, api_client, index_trends, provided_ltp=ltp, live_ltp_dict=live_ltp_dict)
     return res
 
 def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):
