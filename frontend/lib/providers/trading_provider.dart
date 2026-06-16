@@ -685,20 +685,14 @@ class TradingProvider with ChangeNotifier {
   Future<void> _triggerSilentBackgroundReval(Map<String, dynamic> item) async {
     try {
         // Don't send ltp if we want backend to fetch fresh or use its own websocket!
-        final response = await http.get(Uri.parse('http://127.0.0.1:8000/analyze-stock?symbol=${item['symbol']}'));
+        final response = await http.get(Uri.parse('http://127.0.0.1:8000/api/scanner/scan?symbol=${item['symbol']}'));
         if (response.statusCode == 200) {
           final result = jsonDecode(response.body);
           if (result['status'] == 'success') {
-            item['score'] = result['score'];
-            item['recommendation'] = result['recommendation'];
-            item['actionable'] = result['actionable'];
-            item['points'] = result['points'];
-            item['checklist'] = result['checklist'];
-            item['ohlc'] = result['ohlc'];
-            item['volume_breakout'] = result['volume_breakout'];
-            item['ohol_setup'] = result['ohol_setup'];
-            item['vwap'] = result['vwap'];
-            item['ltp'] = result['ltp']; // Ensure LTP matches the evaluated price
+            item['adx_score'] = result['adx_score'];
+            item['engine_used'] = result['engine_used'];
+            item['signals'] = result['signals'];
+            item['ltp'] = result['ltp'];
             if (!_isDisposed) notifyListeners();
           }
         }

@@ -29,9 +29,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   // Price filter limit
   double? _selectedPriceLimit;
 
-  // Score filter limit
-  int? _selectedScoreLimit;
-
   @override
   void initState() {
     super.initState();
@@ -363,51 +360,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     );
   }
 
-  Widget _buildScoreFilters() {
-    final filters = [
-      {"label": "ALL SCORE", "val": null},
-      {"label": ">= 50%", "val": 50},
-      {"label": ">= 60%", "val": 60},
-      {"label": ">= 70%", "val": 70},
-      {"label": ">= 80%", "val": 80},
-      {"label": ">= 90%", "val": 90},
-      {"label": "100%", "val": 100},
-    ];
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: filters.map((f) {
-        final isSelected = _selectedScoreLimit == f["val"];
-        return GestureDetector(
-          onTap: () {
-            setState(() {
-              _selectedScoreLimit = f["val"] as int?;
-            });
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.cyanAccent.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.02),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isSelected ? Colors.cyanAccent.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.05),
-                width: 1,
-              ),
-            ),
-            child: Text(
-              f["label"] as String,
-              style: TextStyle(
-                color: isSelected ? Colors.cyanAccent : Colors.white60,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
 
   Widget _buildSearchCard(bool isScanning) {
     return Container(
@@ -494,8 +446,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
           ),
           const SizedBox(height: 16),
           _buildPriceFilters(),
-          const SizedBox(height: 12),
-          _buildScoreFilters(),
           const SizedBox(height: 16),
           Wrap(
             spacing: 8,
@@ -1370,10 +1320,6 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
         final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
         if (ltp > _selectedPriceLimit!) return false;
       }
-      if (_selectedScoreLimit != null) {
-        final int score = item['score'] ?? 0;
-        if (score < _selectedScoreLimit!) return false;
-      }
       return true;
     }).toList();
 
@@ -1442,12 +1388,12 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final item = filteredWatchlist[idx];
               final String symbol = item['symbol'] ?? "";
               final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
-              final int score = item['score'] ?? 0;
-              final String rec = item['recommendation'] ?? "NEUTRAL";
-              
-              final bool volBreakout = item['volume_breakout'] == true;
-              final String ohol = item['ohol_setup'] ?? 'None';
-              final double vwap = (item['vwap'] as num?)?.toDouble() ?? 0.0;
+              final double adxScore = (item['adx_score'] as num?)?.toDouble() ?? 0;
+              final String engineUsed = item['engine_used'] ?? '';
+              final List signals = item['signals'] ?? [];
+              final String rec = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
+              final String signalTime = signals.isNotEmpty ? (signals.first['time'] ?? '') : '';
+              final String reason = signals.isNotEmpty ? (signals.first['reason'] ?? '') : '';
 
               // Find if this stock has an active trade open
               final now = DateTime.now();
@@ -1466,12 +1412,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final bool hasActive = activeTrade != null;
               final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
-              Color scoreColor = Colors.redAccent;
-              if (score >= 70) {
-                scoreColor = Colors.greenAccent;
-              } else if (score >= 40) {
-                scoreColor = Colors.orangeAccent;
-              }
+              final Color scoreColor = adxScore >= 30 ? Colors.greenAccent
+                  : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
 
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -1537,31 +1479,18 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                "₹${ltp.toStringAsFixed(2)} | Score: $score%${vwap > 0 ? ' | VWAP: ₹${vwap.toStringAsFixed(2)}' : ''}",
+                                "₹${ltp.toStringAsFixed(2)} | ADX: ${adxScore.toStringAsFixed(1)} | $engineUsed",
                                 style: const TextStyle(
                                   color: Colors.white60,
-                                  fontSize: 11,
+                                  fontSize: 10,
                                 ),
                               ),
-                              if (volBreakout || ohol != 'None')
+                              if (reason.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 4),
-                                  child: Row(
-                                    children: [
-                                      if (volBreakout)
-                                        Container(
-                                          margin: const EdgeInsets.only(right: 6),
-                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                          decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                          child: const Text("VOL SPK", style: TextStyle(color: Colors.orangeAccent, fontSize: 8, fontWeight: FontWeight.bold)),
-                                        ),
-                                      if (ohol != 'None')
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                          decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                          child: Text(ohol.split(' ')[0], style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8, fontWeight: FontWeight.bold)),
-                                        ),
-                                    ],
+                                  child: Text(
+                                    "Time: $signalTime | $reason",
+                                    style: const TextStyle(color: Colors.white38, fontSize: 9),
                                   ),
                                 ),
                             ],
