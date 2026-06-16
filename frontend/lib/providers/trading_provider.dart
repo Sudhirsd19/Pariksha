@@ -592,9 +592,9 @@ class TradingProvider with ChangeNotifier {
         "symbol": symbol,
         "name": stockData['symbol'] ?? symbol,
         "ltp": stockData['ltp'] ?? 0.0,
-        "score": stockData['score'] ?? 0,
-        "actionable": stockData['actionable'] ?? false,
-        "recommendation": stockData['recommendation'] ?? "NEUTRAL",
+        "adx_score": stockData['adx_score'] ?? 0.0,
+        "engine_used": stockData['engine_used'] ?? '',
+        "signals": stockData['signals'] ?? [],
         "timestamp": DateTime.now().millisecondsSinceEpoch,
       });
 
