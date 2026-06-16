@@ -544,7 +544,6 @@ class TradingProvider with ChangeNotifier {
             final double newLtp = (res['ltp'] as num?)?.toDouble() ?? 0.0;
             final int newScore = res['score'] ?? 0;
             final bool actionable = res['actionable'] ?? false;
-            final String htfTrend = res['htf_trend'] ?? "NEUTRAL";
 
             String recommendation = res['recommendation'] ?? "NEUTRAL";
 
