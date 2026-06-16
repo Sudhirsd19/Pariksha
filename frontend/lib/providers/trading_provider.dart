@@ -142,8 +142,9 @@ class TradingProvider with ChangeNotifier {
       false; // FIX HIGH-03: Guard against simultaneous reconnect attempts
 
   void _connectWebSocket() {
-    if (_wsReconnecting || _isDisposed)
+    if (_wsReconnecting || _isDisposed) {
       return; // FIX HIGH-03: Prevent double-reconnect, FIX CRIT-2: Check disposed
+    }
     _wsReconnecting = true;
     try {
       // FIX HIGH-03: Cancel existing subscription before creating new one
@@ -163,11 +164,15 @@ class TradingProvider with ChangeNotifier {
           if (jsonData['sentiment_score'] != null) {
             _sentimentScore = (jsonData['sentiment_score'] as num).toDouble();
           }
-          if (jsonData['in_killzone'] != null)
+          if (jsonData['in_killzone'] != null) {
             _inKillzone = jsonData['in_killzone'];
-          if (jsonData['is_active'] != null) _isActive = jsonData['is_active'];
-          if (jsonData['trades_today'] != null)
+          }
+          if (jsonData['is_active'] != null) {
+            _isActive = jsonData['is_active'];
+          }
+          if (jsonData['trades_today'] != null) {
             _tradesToday = jsonData['trades_today'];
+          }
           if (jsonData['daily_loss'] != null) {
             _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
           }
@@ -618,8 +623,9 @@ class TradingProvider with ChangeNotifier {
   }
 
   Future<void> refreshWatchlist() async {
-    if (_isDisposed || _watchlist.isEmpty || _isRefreshingWatchlist)
+    if (_isDisposed || _watchlist.isEmpty || _isRefreshingWatchlist) {
       return; // FIX: Check disposed
+    }
     _isRefreshingWatchlist = true;
     if (!_isDisposed) notifyListeners();
 
