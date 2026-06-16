@@ -92,6 +92,7 @@ risk_manager = RiskManager(initial_capital=100000)
 signal_engine = SignalEngine()
 correlation_engine = CorrelationEngine()
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
+stock_analyzer = StockAnalyzer()  # M-4 Fix: Instantiate globally
 
 @app.on_event("startup")
 async def startup_event():
@@ -118,7 +119,8 @@ async def startup_event():
             doc = db.collection("pnl_daily").document(today).get()
             if doc.exists:
                 data = doc.to_dict()
-                risk_manager.daily_loss = abs(float(data.get("total_pnl", 0))) if float(data.get("total_pnl", 0)) < 0 else 0
+                # Fix M-1: Load gross loss directly if available, otherwise fallback to net
+                risk_manager.daily_loss = abs(float(data.get("gross_loss", 0))) if data.get("gross_loss") else (abs(float(data.get("total_pnl", 0))) if float(data.get("total_pnl", 0)) < 0 else 0)
                 risk_manager.trades_today = int(data.get("total_trades", 0))
                 persistence_manager.log_event("INFO", "DAILY_RESTORE", f"Restored: trades={risk_manager.trades_today}, loss=Rs.{risk_manager.daily_loss:.2f}")
                 print(f"[Startup] Restored today's stats: trades={risk_manager.trades_today}, daily_loss=Rs.{risk_manager.daily_loss:.2f}")
@@ -308,9 +310,16 @@ async def ltp_broadcaster():
                 dt_time(9, 15) <= now_ist.time() <= dt_time(15, 30)  # 9:15 AM to 3:30 PM IST
             )
             if is_market_open:
-                closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
-                for trade in (closed_trades or []):
-                    send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
+                # Fix M-5: Throttle monitor_trades DB writes to 1Hz
+                now_ts = time.time()
+                if not hasattr(ltp_broadcaster, '_last_monitor'):
+                    ltp_broadcaster._last_monitor = 0
+                    
+                if (now_ts - ltp_broadcaster._last_monitor) >= 1.0:
+                    ltp_broadcaster._last_monitor = now_ts
+                    closed_trades = await asyncio.to_thread(trade_manager.monitor_trades, current_ltps)
+                    for trade in (closed_trades or []):
+                        send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
 
             # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
             if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
@@ -470,6 +479,36 @@ async def get_analytics():
         "pnl_history": tm.pnl_history[-20:]
     }
 
+@app.get("/pnl-history")
+def get_pnl_history():
+    return trade_manager.pnl_history
+
+# Fix AE-3: Added /analytics endpoint
+@app.get("/analytics")
+async def get_analytics():
+    from backend.analytics.analytics_engine import AnalyticsEngine
+    engine = AnalyticsEngine()
+    df = await asyncio.to_thread(engine.fetch_recent_trades, 30)
+    if df.empty:
+        return {"error": "No trades found"}
+    stats = engine.analyze_score_impact(df)
+    return {"condition_win_rates": stats, "total_trades": len(df)}
+
+# Fix BE-4: Added /backtest endpoint
+@app.post("/backtest")
+async def run_backtest_endpoint(days: int = 30):
+    from backend.analytics.analytics_engine import AnalyticsEngine
+    from backend.backtesting.backtest_engine import BacktestEngine
+    engine = AnalyticsEngine()
+    df = await asyncio.to_thread(engine.fetch_recent_trades, days)
+    if df.empty:
+        return {"error": "No trades to backtest"}
+    bt = BacktestEngine(initial_capital=100000)
+    for _, row in df.iterrows():
+        if row.get('status') == 'CLOSED' and row.get('entry') and row.get('exit_price'):
+            bt.execute_trade(row['entry'], row['exit_price'], row.get('qty', 50), row.get('signal', 'BUY'))
+    return bt.get_metrics()
+    
 @app.get("/pnl")
 async def get_pnl():
     """Returns real PnL summary from trade_manager."""
@@ -1069,8 +1108,18 @@ async def trading_loop():
                     if not raw.empty and "Close" in raw.columns:
                         closes = raw["Close"]
                         if len(closes) >= 2:
-                            prev_row = closes.iloc[-2]
-                            curr_row = closes.iloc[-1]
+                            # Fix M-3: Safe extraction of gap scan row ignoring partial day
+                            import pandas as pd
+                            today_partial = closes.index[-1].date() == pd.Timestamp.now(tz='Asia/Kolkata').date()
+                            if today_partial and len(closes) >= 3:
+                                prev_row = closes.iloc[-2]
+                                curr_row = closes.iloc[-1]
+                            elif not today_partial:
+                                prev_row = closes.iloc[-2]
+                                curr_row = closes.iloc[-1]
+                            else:
+                                continue # Cannot run gap scan, only 1 valid row
+                                
                             for sym in gap_symbols:
                                 col = f"{sym}.NS"
                                 try:
@@ -1200,8 +1249,8 @@ async def trading_loop():
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
                     # NEW: Fundamental & Technical Validation from Stock Analyzer
-                    analyzer_engine = StockAnalyzer()
-                    analyzer_res = await analyzer_engine.analyze_stock(symbol, broker.smart_api, None)
+                    # M-4 Fix: StockAnalyzer instantiated globally (see line 98)
+                    analyzer_res = await stock_analyzer.analyze_stock(symbol, broker.smart_api, None)
                     if analyzer_res.get("status") == "success":
                         if not analyzer_res.get("actionable", False):
                             print(f"[StockAnalyzer] Rejecting {side} on {symbol}: Scorecard Failed (Score: {analyzer_res.get('score', 0)})")

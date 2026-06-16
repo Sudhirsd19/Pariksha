@@ -102,7 +102,22 @@ class TradeManager:
         """Restore open trades from local SQLite on startup."""
         with self._lock:
             self.active_trades = persistence_manager.get_open_trades()
-            print(f"[TradeManager] Recovered {len(self.active_trades)} open trades from local storage.")
+            # TM-4 Fix: Restore today's session stats from SQLite
+            today_trades = persistence_manager.get_todays_trades()
+            closed = [t for t in today_trades if t.get('status') == 'CLOSED']
+            for t in closed:
+                net = float(t.get('pnl', 0))
+                gross = float(t.get('gross_pnl', net))  # fallback to net if gross not stored
+                self.total_trades += 1
+                self.realized_pnl += net
+                self.total_charges += float(t.get('charges', 0))
+                if net > 0:
+                    self.winning_trades += 1
+                    self.gross_profit += gross
+                else:
+                    self.losing_trades += 1
+                    self.gross_loss += abs(gross)
+            print(f"[TradeManager] Restored session: {len(self.active_trades)} open, trades={self.total_trades}, pnl=Rs.{self.realized_pnl:.2f}")
 
     def add_trade(self, signal_data, doc_id):
         trade = {
@@ -180,6 +195,11 @@ class TradeManager:
                                 new_sl = trade['underlying_entry'] + (tp_distance * 0.1) # Breakeven + buffer
                                 if new_sl > trade['underlying_sl']:
                                     trade['underlying_sl'] = round(new_sl, 2)
+                                    if _TG_AVAILABLE:
+                                        try:
+                                            notify_sl_moved_to_breakeven(trade['symbol'], trade.get('original_signal','BUY'), new_sl)
+                                        except Exception:
+                                            pass
                             
                             # Trail SL at 70% progress — lock in profits
                             if current_profit >= tp_distance * 0.7:
@@ -187,6 +207,11 @@ class TradeManager:
                                 new_sl = underlying_ltp - (atr_trail * 0.5)
                                 if new_sl > trade['underlying_sl']:
                                     trade['underlying_sl'] = round(new_sl, 2)
+                                    if _TG_AVAILABLE:
+                                        try:
+                                            notify_sl_moved_to_breakeven(trade['symbol'], trade.get('original_signal','BUY'), new_sl)
+                                        except Exception:
+                                            pass
                                     
                         elif original_signal == 'SELL':
                             tp_distance = trade['underlying_entry'] - trade['underlying_tp']
@@ -197,6 +222,11 @@ class TradeManager:
                                 new_sl = trade['underlying_entry'] - (tp_distance * 0.1)
                                 if new_sl < trade['underlying_sl']:
                                     trade['underlying_sl'] = round(new_sl, 2)
+                                    if _TG_AVAILABLE:
+                                        try:
+                                            notify_sl_moved_to_breakeven(trade['symbol'], trade.get('original_signal','SELL'), new_sl)
+                                        except Exception:
+                                            pass
                             
                             # Trail SL at 70% progress
                             if current_profit >= tp_distance * 0.7:
@@ -204,6 +234,11 @@ class TradeManager:
                                 new_sl = underlying_ltp + (atr_trail * 0.5)
                                 if new_sl < trade['underlying_sl']:
                                     trade['underlying_sl'] = round(new_sl, 2)
+                                    if _TG_AVAILABLE:
+                                        try:
+                                            notify_sl_moved_to_breakeven(trade['symbol'], trade.get('original_signal','SELL'), new_sl)
+                                        except Exception:
+                                            pass
                 else:
                     # ── EQUITY / FUTURES TRAILING SL ──────────────────────
                     if trade['signal'] == 'BUY':
@@ -400,6 +435,9 @@ class TradeManager:
                     exit_price = ltp_dict[token]
                 
                 if trade.get("instrument_type") == "OPTIONS":
+                    # Options are always bought (CE for BUY signal, PE for SELL signal)
+                    # Premium appreciation = profit regardless of underlying direction
+                    # Sanity check: if original_signal is SELL, this still uses exit-entry (correct for PE buying)
                     pnl = (exit_price - trade["entry"]) * trade["qty"]
                 else:
                     if trade["signal"] == "BUY":
@@ -486,7 +524,8 @@ class TradeManager:
         
         analytics_data = {
             "total_pnl": self.realized_pnl,
-            "realized_profit": self.realized_pnl + self.total_charges,
+            "realized_profit": self.realized_pnl,  # Net PnL (after charges)
+            "gross_profit_before_charges": self.gross_profit, # Gross PnL
             "charges": self.total_charges,
             "max_drawdown": self.max_drawdown,
             "win_rate": win_rate,

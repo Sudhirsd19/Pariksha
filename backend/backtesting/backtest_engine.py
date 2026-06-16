@@ -9,24 +9,31 @@ class BacktestEngine:
         
         # Costs (Approx for Nifty Options)
         self.brokerage_per_order = 20
-        self.slippage_pct = 0.001 # 0.1% slippage
         self.stt_pct = 0.0005    # 0.05% on sell
+        # BE-2 Fix: Asymmetric slippage
+        self.entry_slippage_pct = 0.008  # 0.8% on options entry (wide spread at open)
+        self.exit_slippage_pct  = 0.003  # 0.3% on options exit
         
     def calculate_costs(self, price, qty, is_buy=True):
         brokerage = self.brokerage_per_order
-        slippage = price * qty * self.slippage_pct
+        slippage = price * qty * (self.entry_slippage_pct if is_buy else self.exit_slippage_pct)
         stt = 0
         if not is_buy:
             stt = price * qty * self.stt_pct
         
         return brokerage + slippage + stt
 
-    def execute_trade(self, entry_price, exit_price, qty, side="BUY"):
+    def execute_trade(self, entry_price, exit_price, qty, side="BUY", is_expiry=False, underlying_price=0):
         # Entry Costs
         entry_costs = self.calculate_costs(entry_price, qty, is_buy=(side=="BUY"))
         
         # Exit Costs
         exit_costs = self.calculate_costs(exit_price, qty, is_buy=(side=="SELL"))
+        
+        # BE-1 Fix: ITM expiry STT trap
+        if is_expiry and exit_price > 0 and underlying_price > 0:
+            stt_trap = underlying_price * qty * 0.00125
+            exit_costs += stt_trap
         
         # Gross PnL
         if side == "BUY":
@@ -60,9 +67,27 @@ class BacktestEngine:
         total_pnl = df['net_pnl'].sum()
         max_drawdown = self.calculate_max_drawdown()
         
+        # BE-3 Fix: Add Profit Factor, Expectancy, Sharpe Ratio
+        winners = df[df['net_pnl'] > 0]
+        losers  = df[df['net_pnl'] <= 0]
+        
+        avg_win  = winners['net_pnl'].mean() if not winners.empty else 0
+        avg_loss = abs(losers['net_pnl'].mean()) if not losers.empty else 0
+        win_rate_decimal = len(winners) / len(df)
+        
+        expectancy = (win_rate_decimal * avg_win) - ((1 - win_rate_decimal) * avg_loss)
+        profit_factor = winners['net_pnl'].sum() / abs(losers['net_pnl'].sum()) if not losers.empty else float('inf')
+        
+        # Sharpe (simplified, assumes daily trades)
+        daily_pnl = df['net_pnl']
+        sharpe = (daily_pnl.mean() / daily_pnl.std() * (252 ** 0.5)) if daily_pnl.std() > 0 else 0
+        
         return {
             'Total PnL': total_pnl,
             'Win Rate (%)': win_rate,
+            'Profit Factor': round(profit_factor, 2),
+            'Expectancy (Rs.)': round(expectancy, 2),
+            'Sharpe Ratio': round(sharpe, 2),
             'Max Drawdown (%)': max_drawdown,
             'Total Trades': len(df),
             'Avg PnL per Trade': total_pnl / len(df)

@@ -1,7 +1,8 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
 import pandas as pd
-import datetime
+import pandas as pd
+from datetime import datetime, timedelta, timezone
 
 class AnalyticsEngine:
     def __init__(self):
@@ -15,7 +16,8 @@ class AnalyticsEngine:
         if not self.db:
             return pd.DataFrame()
             
-        start_time = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp() * 1000)
+        IST = timezone(timedelta(hours=5, minutes=30))
+        start_time = int((datetime.now(IST) - timedelta(days=days)).timestamp() * 1000)
         trades_ref = self.db.collection("quantum_trades").where("timestamp", ">=", start_time).stream()
         
         trades = []
@@ -50,7 +52,10 @@ class AnalyticsEngine:
                 
         # Calculate Win Rates
         report = {}
+        MIN_TRADES = 5  # AE-2 Fix: Only report conditions with at least 5 trades
         for key, stats in condition_stats.items():
+            if stats['trades'] < MIN_TRADES:
+                continue
             win_rate = (stats['wins'] / stats['trades']) * 100
             report[key] = {
                 "trades": stats['trades'],

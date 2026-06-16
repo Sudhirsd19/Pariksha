@@ -6,6 +6,10 @@ class OIEngine:
         # We will cache the Open Interest data here
         self.options_chain = {}
         self.last_update_time = 0
+        
+    def is_data_fresh(self, max_age_seconds=120):
+        # Fix OI-4: Check if data is stale
+        return (time.time() - self.last_update_time) < max_age_seconds
 
     def fetch_options_chain(self, symbol, smart_api):
         """
@@ -31,8 +35,8 @@ class OIEngine:
 
         interval = 50 if symbol == "NIFTY" else 100
         atm_strike = int(round(index_ltp / interval) * interval)
-        # Reduce load: Only fetch Top 5 strikes (ATM ± 2) instead of 11 strikes
-        strikes = [atm_strike + i * interval for i in range(-2, 3)] # 5 strikes around ATM
+        # Fix OI-3: Revert to 11 strikes for accurate PCR (we can safely fetch up to 22 NFO tokens)
+        strikes = [atm_strike + i * interval for i in range(-5, 6)] # 11 strikes around ATM
         
         tokens_to_fetch = []
         token_metadata = {} # Map token -> (strike, type)
@@ -142,25 +146,50 @@ class OIEngine:
                 
         return float(max_pain_strike)
 
-    def is_oi_supportive(self, symbol, side):
+    def is_oi_supportive(self, symbol, side, current_price=None):
         """
         Checks if the Open Interest supports the trade direction.
         Used as a final filter before placing a trade.
         """
+        # Fix OI-4: Stale check
+        if not self.is_data_fresh():
+            print(f"[OIEngine] Stale OI data (>{120}s old). Allowing trade.")
+            return True
+            
         pcr = self.calculate_pcr(symbol)
         
         # Fail-Safe: If PCR couldn't be calculated, assume Neutral and don't block the trade.
         if pcr is None:
             return True
             
+        # Fix OI-2: Wire Max Pain filter
+        if current_price:
+            max_pain = self.calculate_max_pain(symbol)
+            if max_pain > 0:
+                distance_pct = abs(current_price - max_pain) / current_price * 100
+                if distance_pct < 0.3:  # within 0.3% of max pain = avoid
+                    print(f"[OIEngine] Near max pain ({max_pain}). Skipping {side}.")
+                    return False
+                if side == "BUY" and current_price > max_pain * 1.005:
+                    print(f"[OIEngine] Price above max pain. BUY risky.")
+                    return False
+                if side == "SELL" and current_price < max_pain * 0.995:
+                    print(f"[OIEngine] Price below max pain. SELL risky.")
+                    return False
+            
+        # Fix OI-1: Asymmetric thresholds & Weekly Expiry Adjustment
+        import datetime
+        now_ist = datetime.datetime.now()
+        EXPIRY_DAY = now_ist.weekday() == 3  # Thursday = NSE weekly expiry
+        
         if side == "BUY":
-            # If we want to go Long, PCR should ideally be > 0.85
-            if pcr < 0.8:
+            threshold = 0.65 if EXPIRY_DAY else 0.75
+            if pcr < threshold:
                 print(f"[OIEngine] TRAP ALERT: Rejecting BUY on {symbol}. PCR is too low ({pcr}). Call writers dominate.")
                 return False
         elif side == "SELL":
-            # If we want to go Short, PCR should ideally be < 1.15
-            if pcr > 1.2:
+            threshold = 1.35 if EXPIRY_DAY else 1.25
+            if pcr > threshold:
                 print(f"[OIEngine] TRAP ALERT: Rejecting SELL on {symbol}. PCR is too high ({pcr}). Put writers dominate.")
                 return False
                 
