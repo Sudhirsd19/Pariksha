@@ -484,7 +484,7 @@ class TradingProvider with ChangeNotifier {
         "ltp": stockData['ltp'] ?? 0.0,
         "score": stockData['score'] ?? 0,
         "actionable": stockData['actionable'] ?? false,
-        "recommendation": (stockData['score'] ?? 0) >= 70 ? "BUY" : ((stockData['score'] ?? 0) <= 40 ? "SELL" : "NEUTRAL"),
+        "recommendation": stockData['recommendation'] ?? "NEUTRAL",
         "timestamp": DateTime.now().millisecondsSinceEpoch,
       });
 
@@ -546,10 +546,7 @@ class TradingProvider with ChangeNotifier {
             final bool actionable = res['actionable'] ?? false;
             final String htfTrend = res['htf_trend'] ?? "NEUTRAL";
 
-            String recommendation = "NEUTRAL";
-            if (newScore >= 70) {
-              recommendation = htfTrend == "Bullish" ? "BUY" : "SELL";
-            }
+            String recommendation = res['recommendation'] ?? "NEUTRAL";
 
             final idx = updatedList.indexWhere((i) => i['symbol'] == symbol);
             if (idx != -1) {

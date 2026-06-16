@@ -924,6 +924,12 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
     if res.get("status") == "error":
         return res
         
+    if not res.get("actionable", False):
+        return {
+            "status": "error", 
+            "message": f"Execution Blocked: {symbol} does not meet strict technical criteria right now (Score: {res.get('score', 0)}%)."
+        }
+        
     token = res["token"]
     trading_symbol = res["trading_symbol"]
     price = res["ltp"]
