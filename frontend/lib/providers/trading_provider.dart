@@ -617,7 +617,7 @@ class TradingProvider with ChangeNotifier {
   void _startWatchlistRefreshTimer() {
     if (_isDisposed) return; // FIX: Don't start timer if already disposed
     _watchlistRefreshTimer =
-        Timer.periodic(const Duration(seconds: 30), (timer) {
+        Timer.periodic(const Duration(seconds: 60), (timer) {
       if (!_isDisposed) refreshWatchlist();
     });
   }
@@ -641,7 +641,8 @@ class TradingProvider with ChangeNotifier {
         final symbol = item['symbol'];
         if (symbol == null) continue;
         try {
-          final res = await _apiService.analyzeStock(symbol);
+          final double currentLtp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
+          final res = await _apiService.analyzeStock(symbol, ltp: currentLtp);
           if (res != null && res['status'] == 'success') {
             final double newLtp = (res['ltp'] as num?)?.toDouble() ?? 0.0;
             final int newScore = res['score'] ?? 0;
