@@ -55,16 +55,16 @@ STOCK_SECTOR_MAP = {
 
 # Offline fundamental data for common NSE stocks (as fallback and speed optimization)
 STOCK_FUNDAMENTAL_CACHE = {
-    "RELIANCE": {"pe": 26.5, "debt_to_equity": 0.42, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "TCS": {"pe": 30.1, "debt_to_equity": 0.05, "promoter_pledge": 0.5, "news_event": "Safe"},
-    "INFY": {"pe": 24.2, "debt_to_equity": 0.06, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "HDFCBANK": {"pe": 19.8, "debt_to_equity": 0.88, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "ICICIBANK": {"pe": 18.2, "debt_to_equity": 0.81, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "TATASTEEL": {"pe": 14.5, "debt_to_equity": 1.15, "promoter_pledge": 1.2, "news_event": "Safe"},
-    "SBIN": {"pe": 10.5, "debt_to_equity": 1.50, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "BHARTIARTL": {"pe": 45.2, "debt_to_equity": 1.62, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "WIPRO": {"pe": 22.1, "debt_to_equity": 0.12, "promoter_pledge": 0.0, "news_event": "Safe"},
-    "ADANIPORTS": {"pe": 35.4, "debt_to_equity": 1.05, "promoter_pledge": 15.2, "news_event": "Safe"},
+    "RELIANCE": {"pe": 26.5, "debt_to_equity": 0.42, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 55.0, "promoter_holding": 50.3, "earnings_growth": 16.5},
+    "TCS": {"pe": 30.1, "debt_to_equity": 0.05, "promoter_pledge": 0.5, "news_event": "Safe", "institutional_holding": 45.0, "promoter_holding": 72.3, "earnings_growth": 12.0},
+    "INFY": {"pe": 24.2, "debt_to_equity": 0.06, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 60.0, "promoter_holding": 15.0, "earnings_growth": 18.0},
+    "HDFCBANK": {"pe": 19.8, "debt_to_equity": 0.88, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 75.0, "promoter_holding": 0.0, "earnings_growth": 20.0},
+    "ICICIBANK": {"pe": 18.2, "debt_to_equity": 0.81, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 65.0, "promoter_holding": 0.0, "earnings_growth": 22.0},
+    "TATASTEEL": {"pe": 14.5, "debt_to_equity": 1.15, "promoter_pledge": 1.2, "news_event": "Safe", "institutional_holding": 42.0, "promoter_holding": 33.9, "earnings_growth": 8.0},
+    "SBIN": {"pe": 10.5, "debt_to_equity": 1.50, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 35.0, "promoter_holding": 57.6, "earnings_growth": 19.0},
+    "BHARTIARTL": {"pe": 45.2, "debt_to_equity": 1.62, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 48.0, "promoter_holding": 54.8, "earnings_growth": 25.0},
+    "WIPRO": {"pe": 22.1, "debt_to_equity": 0.12, "promoter_pledge": 0.0, "news_event": "Safe", "institutional_holding": 15.0, "promoter_holding": 72.9, "earnings_growth": 5.0},
+    "ADANIPORTS": {"pe": 35.4, "debt_to_equity": 1.05, "promoter_pledge": 15.2, "news_event": "Safe", "institutional_holding": 25.0, "promoter_holding": 65.9, "earnings_growth": 30.0},
 }
 
 class StockAnalyzer:
@@ -255,14 +255,20 @@ class StockAnalyzer:
         debt_to_equity = None
         promoter_pledge = 0.0
         news_event = "Safe"
+        institutional_holding = 0.0
+        promoter_holding = 0.0
+        earnings_growth = 0.0
 
         # Try cache first for speed
         if symbol in STOCK_FUNDAMENTAL_CACHE:
             cached = STOCK_FUNDAMENTAL_CACHE[symbol]
-            pe = cached["pe"]
-            debt_to_equity = cached["debt_to_equity"]
-            promoter_pledge = cached["promoter_pledge"]
-            news_event = cached["news_event"]
+            pe = cached.get("pe", 22.5)
+            debt_to_equity = cached.get("debt_to_equity", 0.45)
+            promoter_pledge = cached.get("promoter_pledge", 0.0)
+            news_event = cached.get("news_event", "Safe")
+            institutional_holding = cached.get("institutional_holding", 0.0)
+            promoter_holding = cached.get("promoter_holding", 0.0)
+            earnings_growth = cached.get("earnings_growth", 0.0)
         
         # If not in cache or we want to try live update, use yfinance
         if (pe is None or debt_to_equity is None) and yf:
@@ -275,6 +281,10 @@ class StockAnalyzer:
                     # If debt to equity is e.g. 88.5 in yfinance, it usually represents 88.5%, i.e., 0.885
                     if debt_to_equity is not None and debt_to_equity > 10:
                         debt_to_equity = debt_to_equity / 100.0
+                    
+                    institutional_holding = (info.get("heldPercentInstitutions") or 0.0) * 100
+                    promoter_holding = (info.get("heldPercentInsiders") or 0.0) * 100
+                    earnings_growth = (info.get("earningsGrowth") or 0.0) * 100
                     
                     # Estimate promoter pledging or check if there's a field
                     # yfinance doesn't easily expose Indian pledging directly, so we keep fallback/0.0
@@ -301,7 +311,7 @@ class StockAnalyzer:
         score = 0
         checklist = []
 
-        # Check 1: HTF Trend & Sector Index Alignment (20 points)
+        # Check 1: HTF Trend & Sector Index Alignment (10 points)
         htf_ok = htf_trend == "Bullish"
         sector_aligned = (sector_trend == "Bullish") if htf_ok else (sector_trend == "Bearish")
         if sector_trend == "Neutral":
@@ -309,107 +319,107 @@ class StockAnalyzer:
             
         if htf_ok:
             if sector_aligned and sector_trend != "Neutral":
-                score += 20
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 20})
+                score += 10
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bullish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 10})
             elif sector_trend == "Neutral":
-                score += 15
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish (Sector Index {index_ticker} is Neutral/Offline)", "points": 15})
+                score += 7
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bullish (Sector Index {index_ticker} is Neutral/Offline)", "points": 7})
             else:
-                score += 5
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bullish but Sector Index {index_ticker} is {sector_trend}", "points": 5})
+                score += 3
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bullish but Sector Index {index_ticker} is {sector_trend}", "points": 3})
         else:
             if sector_aligned and sector_trend != "Neutral":
-                score += 20
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bearish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 20})
+                score += 10
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Pass", "detail": f"Bearish (Aligned with Sector Index {index_ticker}: {sector_trend})", "points": 10})
             elif sector_trend == "Neutral":
-                score += 15
-                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bearish (Sector Index {index_ticker} is Neutral/Offline)", "points": 15})
+                score += 7
+                checklist.append({"item": "Trend & Sector Alignment", "status": "Warn", "detail": f"Bearish (Sector Index {index_ticker} is Neutral/Offline)", "points": 7})
             else:
                 checklist.append({"item": "Trend & Sector Alignment", "status": "Fail", "detail": f"Bearish but Sector Index {index_ticker} is {sector_trend}", "points": 0})
 
-        # Check 2: Value Zone (15 points)
+        # Check 2: Value Zone (5 points)
         zone_ok = value_zone in ["Discount", "Equilibrium"]
         if zone_ok:
-            score += 15
-            checklist.append({"item": "Value Zone Check", "status": "Pass", "detail": f"Stock is in {value_zone} zone", "points": 15})
+            score += 5
+            checklist.append({"item": "Value Zone Check", "status": "Pass", "detail": f"Stock is in {value_zone} zone", "points": 5})
         else:
             checklist.append({"item": "Value Zone Check", "status": "Fail", "detail": "Stock is in Premium zone (Expensive)", "points": 0})
 
-        # Check 3: Displacement & Structure (15 points)
+        # Check 3: Displacement & Structure (10 points)
         if displacement_pass:
-            score += 15
-            checklist.append({"item": "Displacement & OB", "status": "Pass", "detail": "Bullish Structure / FVG Gap Detected", "points": 15})
+            score += 10
+            checklist.append({"item": "Displacement & OB", "status": "Pass", "detail": "Bullish Structure / FVG Gap Detected", "points": 10})
         else:
             checklist.append({"item": "Displacement & OB", "status": "Fail", "detail": "No Bullish Structure/displacement on 5M", "points": 0})
 
-        # Check 7: VWAP Alignment (Mandatory for Actionable)
+        # Check 7: VWAP Alignment (Mandatory for Actionable) (10 points)
         if vwap_alignment == "Bullish":
-            score += 15
-            checklist.append({"item": "VWAP Alignment", "status": "Pass", "detail": f"LTP ({real_ltp}) > VWAP ({vwap:.2f})", "points": 15})
+            score += 10
+            checklist.append({"item": "VWAP Alignment", "status": "Pass", "detail": f"LTP ({real_ltp}) > VWAP ({vwap:.2f})", "points": 10})
         elif vwap_alignment == "Bearish":
             checklist.append({"item": "VWAP Alignment", "status": "Fail", "detail": f"LTP ({real_ltp}) < VWAP ({vwap:.2f})", "points": 0})
         else:
             checklist.append({"item": "VWAP Alignment", "status": "Warn", "detail": "VWAP data not available", "points": 5})
 
-        # Check 8: Order Book / Market Depth Ratio
+        # Check 8: Order Book / Market Depth Ratio (5 points)
         depth_ok = False
         if market_depth:
             if tot_buy > (1.2 * tot_sell):
                 depth_ok = True
-                score += 10
-                checklist.append({"item": "Market Depth Ratio", "status": "Pass", "detail": f"Buyers ({tot_buy}) > 1.2x Sellers ({tot_sell})", "points": 10})
+                score += 5
+                checklist.append({"item": "Market Depth Ratio", "status": "Pass", "detail": f"Buyers ({tot_buy}) > 1.2x Sellers ({tot_sell})", "points": 5})
             else:
                 checklist.append({"item": "Market Depth Ratio", "status": "Fail", "detail": f"Weak Demand (Buy:{tot_buy} Sell:{tot_sell})", "points": 0})
         else:
             checklist.append({"item": "Market Depth Ratio", "status": "Warn", "detail": "Depth data unavailable", "points": 0})
 
-        # Check 9: Volume Breakout
+        # Check 9: Volume Breakout (5 points)
         if volume_breakout:
-            score += 10
-            checklist.append({"item": "Volume Breakout", "status": "Pass", "detail": f"Today's Vol > 1.5x of 10D Avg", "points": 10})
+            score += 5
+            checklist.append({"item": "Volume Breakout", "status": "Pass", "detail": f"Today's Vol > 1.5x of 10D Avg", "points": 5})
         else:
             checklist.append({"item": "Volume Breakout", "status": "Warn", "detail": "Average or Low Volume", "points": 0})
 
-        # Check 10: OHOL Setup (Bonus 15 Points)
+        # Check 10: OHOL Setup (5 Points)
         if "Bullish" in ohol_setup:
-            score += 15
-            checklist.append({"item": "OHOL Setup", "status": "Pass", "detail": ohol_setup, "points": 15})
+            score += 5
+            checklist.append({"item": "OHOL Setup", "status": "Pass", "detail": ohol_setup, "points": 5})
         elif ohol_setup != "None":
             checklist.append({"item": "OHOL Setup", "status": "Fail", "detail": ohol_setup, "points": 0})
 
-        # Check 4: Debt-to-Equity (15 points)
+        # Check 4: Debt-to-Equity (4 points)
         is_bank = symbol in ["HDFCBANK", "ICICIBANK", "SBIN"]
         debt_ok = (debt_to_equity < 1.0) or (is_bank and debt_to_equity < 2.0)
         if debt_ok:
-            score += 15
-            checklist.append({"item": "Debt-to-Equity Check", "status": "Pass", "detail": f"D/E is {debt_to_equity:.2f} (Safe)", "points": 15})
+            score += 4
+            checklist.append({"item": "Debt-to-Equity Check", "status": "Pass", "detail": f"D/E is {debt_to_equity:.2f} (Safe)", "points": 4})
         else:
             checklist.append({"item": "Debt-to-Equity Check", "status": "Fail", "detail": f"D/E is {debt_to_equity:.2f} (Risky)", "points": 0})
 
-        # Check 5: Promoter Pledge (15 points)
+        # Check 5: Promoter Pledge (3 points)
         pledge_ok = promoter_pledge < 10.0
         if pledge_ok:
-            score += 15
-            checklist.append({"item": "Promoter Pledge Check", "status": "Pass", "detail": f"{promoter_pledge:.1f}% Pledged (Safe)", "points": 15})
+            score += 3
+            checklist.append({"item": "Promoter Pledge Check", "status": "Pass", "detail": f"{promoter_pledge:.1f}% Pledged (Safe)", "points": 3})
         else:
             checklist.append({"item": "Promoter Pledge Check", "status": "Fail", "detail": f"{promoter_pledge:.1f}% Pledged (High)", "points": 0})
 
-        # Check 6: Economic Event Check (10 points)
+        # Check 6: Economic Event Check (3 points)
         event_ok = "Blocked" not in news_event
         if event_ok:
-            score += 10
-            checklist.append({"item": "Economic Event Calendar", "status": "Pass", "detail": "No major earnings in next 48h (Safe)", "points": 10})
+            score += 3
+            checklist.append({"item": "Economic Event Calendar", "status": "Pass", "detail": "No major earnings in next 48h (Safe)", "points": 3})
         else:
             checklist.append({"item": "Economic Event Calendar", "status": "Fail", "detail": f"{news_event}", "points": 0})
 
-        # Check 11: Bid-Ask Spread Check (10 points)
+        # Check 11: Bid-Ask Spread Check (5 points)
         if spread_ok:
-            score += 10
-            checklist.append({"item": "Bid-Ask Spread Check", "status": "Pass", "detail": f"Spread is {spread_pct*100:.3f}% (Safe)", "points": 10})
+            score += 5
+            checklist.append({"item": "Bid-Ask Spread Check", "status": "Pass", "detail": f"Spread is {spread_pct*100:.3f}% (Safe)", "points": 5})
         else:
             checklist.append({"item": "Bid-Ask Spread Check", "status": "Fail", "detail": f"Wide Spread: {spread_pct*100:.3f}% (>0.1% Slippage Risk)", "points": 0})
 
-        # Check 13: VWAP Deviation Band (Standard Deviation Band Check - 10 points)
+        # Check 13: VWAP Deviation Band (Standard Deviation Band Check - 5 points)
         vwap_overextended = False
         upper_band = vwap
         if vwap > 0 and df_5m is not None and not df_5m.empty:
@@ -421,10 +431,31 @@ class StockAnalyzer:
                 vwap_overextended = True
 
         if not vwap_overextended:
-            score += 10
-            checklist.append({"item": "VWAP Deviation Band", "status": "Pass", "detail": f"Price within standard deviation bands from VWAP", "points": 10})
+            score += 5
+            checklist.append({"item": "VWAP Deviation Band", "status": "Pass", "detail": f"Price within standard deviation bands from VWAP", "points": 5})
         else:
             checklist.append({"item": "VWAP Deviation Band", "status": "Fail", "detail": f"Overextended: Price ({real_ltp:.2f}) > VWAP + 2SD ({upper_band:.2f})", "points": 0})
+            
+        # Check 14: Institutional Holding (10 points)
+        if institutional_holding > 40.0:
+            score += 10
+            checklist.append({"item": "Institutional Holding", "status": "Pass", "detail": f"High FII/DII backing ({institutional_holding:.1f}%)", "points": 10})
+        elif institutional_holding > 0:
+            checklist.append({"item": "Institutional Holding", "status": "Warn", "detail": f"Moderate/Low institutional backing ({institutional_holding:.1f}%)", "points": 0})
+            
+        # Check 15: Promoter Holding (10 points)
+        if promoter_holding > 50.0:
+            score += 10
+            checklist.append({"item": "Promoter Holding", "status": "Pass", "detail": f"High Promoter Trust ({promoter_holding:.1f}%)", "points": 10})
+        elif promoter_holding > 0:
+            checklist.append({"item": "Promoter Holding", "status": "Warn", "detail": f"Moderate/Low Promoter Trust ({promoter_holding:.1f}%)", "points": 0})
+            
+        # Check 16: Earnings Growth (10 points)
+        if earnings_growth > 15.0:
+            score += 10
+            checklist.append({"item": "Earnings Growth", "status": "Pass", "detail": f"Strong Profit Growth ({earnings_growth:.1f}%)", "points": 10})
+        elif earnings_growth > 0:
+            checklist.append({"item": "Earnings Growth", "status": "Warn", "detail": f"Moderate Profit Growth ({earnings_growth:.1f}%)", "points": 0})
 
         # Check 12: Time-of-Day Filter
         ist_tz = timezone(timedelta(hours=5, minutes=30))
