@@ -118,7 +118,7 @@ class ApiService {
   Future<Map<String, dynamic>?> smartScreener(double maxPrice, {int minScore = 70}) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/smart-screener?max_price=$maxPrice&min_score=$minScore'),
+        Uri.parse('$baseUrl/api/scanner/bulk-scan?max_price=$maxPrice'),
       ).timeout(const Duration(seconds: 180));
       if (response.statusCode == 200) {
         return json.decode(response.body);

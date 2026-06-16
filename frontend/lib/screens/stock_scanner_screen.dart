@@ -1949,22 +1949,19 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                 children: _results.map((stock) {
                   final String symbol = stock['symbol'] ?? '';
                   final double ltp = (stock['ltp'] as num?)?.toDouble() ?? 0;
-                  final int score = (stock['score'] as num?)?.toInt() ?? 0;
-                  final String trend = stock['htf_trend'] ?? '';
-                  final String zone    = stock['value_zone']?.toString() ?? '';
-                  final String signal  = stock['signal'] ?? 'BUY';
-                  final bool isBuySignal = signal == 'BUY';
-                  final Color tileColor  = isBuySignal ? Colors.greenAccent : Colors.redAccent;
+                  final double adxScore = (stock['adx_score'] as num?)?.toDouble() ?? 0;
+                  final String engineUsed = stock['engine_used'] ?? '';
+                  final List signals = stock['signals'] ?? [];
+                  final String signal = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
+                  final String signalTime = signals.isNotEmpty ? (signals.first['time'] ?? '') : '';
+                  final String reason = signals.isNotEmpty ? (signals.first['reason'] ?? '') : '';
                   
-                  final int totBuy = (stock['total_buyers'] as num?)?.toInt() ?? 0;
-                  final int totSell = (stock['total_sellers'] as num?)?.toInt() ?? 0;
-                  final double vwap = (stock['vwap'] as num?)?.toDouble() ?? 0.0;
-                  final bool volBreakout = stock['volume_breakout'] == true;
-                  final String ohol = stock['ohol_setup'] ?? 'None';
+                  final bool isBuySignal = signal == 'BUY';
+                  final Color tileColor  = isBuySignal ? Colors.greenAccent : (signal == 'SELL' ? Colors.redAccent : Colors.amberAccent);
 
                   // Score color
-                  final Color scoreColor = score >= 90 ? Colors.greenAccent
-                      : score >= 80 ? Colors.cyanAccent : Colors.deepPurpleAccent;
+                  final Color scoreColor = adxScore >= 30 ? Colors.greenAccent
+                      : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
 
                   // Find if this stock has an active trade open today
                   final now = DateTime.now();
@@ -2053,35 +2050,14 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                     ],
                                   ),
                                   Text(
-                                    "$trend  •  ${zone.isNotEmpty ? zone : 'In Range'}",
+                                    "$engineUsed",
                                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    "VWAP: ₹${vwap.toStringAsFixed(2)} | B: $totBuy / S: $totSell",
+                                    "Time: $signalTime | $reason",
                                     style: const TextStyle(color: Colors.white54, fontSize: 9),
                                   ),
-                                  if (volBreakout || ohol != 'None')
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 4),
-                                      child: Row(
-                                        children: [
-                                          if (volBreakout)
-                                            Container(
-                                              margin: const EdgeInsets.only(right: 6),
-                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                              child: const Text("VOL SPK", style: TextStyle(color: Colors.orangeAccent, fontSize: 8, fontWeight: FontWeight.bold)),
-                                            ),
-                                          if (ohol != 'None')
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                              decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                              child: Text(ohol.split(' ')[0], style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 8, fontWeight: FontWeight.bold)),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
                                 ],
                               ),
                             ),
@@ -2103,11 +2079,11 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
-                                    "$score%",
+                                    "ADX: ${adxScore.toStringAsFixed(1)}",
                                     style: TextStyle(
                                       color: scoreColor,
                                       fontWeight: FontWeight.w900,
-                                      fontSize: 11,
+                                      fontSize: 10,
                                     ),
                                   ),
                                 ),

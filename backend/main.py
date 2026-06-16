@@ -877,10 +877,10 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 
         return {
             "status": "success",
-            "total_scanned": len(SCREENER_UNIVERSE),
+            "scanned": len(SCREENER_UNIVERSE),
             "active_trades_found": len(active_trades),
             "max_price_applied": max_price,
-            "trades": active_trades
+            "results": active_trades
         }
 
     result = await asyncio.to_thread(process_all)
