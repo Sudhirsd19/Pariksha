@@ -1669,7 +1669,6 @@ class _SmartScreenerCard extends StatefulWidget {
 
 class _SmartScreenerCardState extends State<_SmartScreenerCard> {
   double _selectedPrice = 500;
-  int _selectedScore  = 70;  // min_score filter
   bool _isScanning = false;
   List<Map<String, dynamic>> _results = [];
   int _scanned = 0;
@@ -1677,7 +1676,6 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
   String? _error;
 
   final List<double> _priceLimits = [200, 500, 1000, 1500, 3000];
-  final List<int>    _scoreLimits = [70, 80, 90, 100];
 
   Future<void> _runScan() async {
     setState(() {
@@ -1688,7 +1686,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
     });
     try {
       final provider = Provider.of<TradingProvider>(context, listen: false);
-      final res = await provider.smartScreener(_selectedPrice, minScore: _selectedScore);
+      final res = await provider.smartScreener(_selectedPrice);
       if (res != null && res['status'] == 'success') {
         setState(() {
           _results = List<Map<String, dynamic>>.from(
@@ -1752,7 +1750,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     ),
                   ),
                   Text(
-                    "Score ≥$_selectedScore  •  Price < ₹${_selectedPrice.toInt()}",
+                    "Price < ₹${_selectedPrice.toInt()}",
                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                   ),
                 ],
@@ -1805,54 +1803,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
           ),
           const SizedBox(height: 18),
 
-          // MIN SCORE Label
-          const Text(
-            "MIN SCORE",
-            style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2),
-          ),
-          const SizedBox(height: 10),
 
-          // Score Filter Chips
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _scoreLimits.map((score) {
-              final selected = _selectedScore == score;
-              final Color scoreColor = score >= 90
-                  ? Colors.greenAccent
-                  : score >= 80
-                      ? Colors.cyanAccent
-                      : Colors.deepPurpleAccent;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedScore = score),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? scoreColor.withValues(alpha: 0.18)
-                        : Colors.white.withValues(alpha: 0.03),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: selected
-                          ? scoreColor.withValues(alpha: 0.6)
-                          : Colors.white.withValues(alpha: 0.07),
-                      width: 1.2,
-                    ),
-                  ),
-                  child: Text(
-                    score == 100 ? "100 only" : "≥ $score",
-                    style: TextStyle(
-                      color: selected ? scoreColor : Colors.white54,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 18),
 
           GestureDetector(
             onTap: _isScanning ? null : _runScan,
@@ -1932,7 +1883,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     const Icon(Icons.search_off_rounded, color: Colors.white24, size: 32),
                     const SizedBox(height: 8),
                     Text(
-                      "Score ≥$_selectedScore stock nahi mila under ₹${_selectedPrice.toInt()}",
+                      "Koi stock nahi mila under ₹${_selectedPrice.toInt()}",
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white38, fontSize: 12),
                     ),
