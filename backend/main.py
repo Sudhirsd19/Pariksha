@@ -483,17 +483,6 @@ async def get_analytics():
 def get_pnl_history():
     return trade_manager.pnl_history
 
-# Fix AE-3: Added /analytics endpoint
-@app.get("/analytics")
-async def get_analytics():
-    from backend.analytics.analytics_engine import AnalyticsEngine
-    engine = AnalyticsEngine()
-    df = await asyncio.to_thread(engine.fetch_recent_trades, 30)
-    if df.empty:
-        return {"error": "No trades found"}
-    stats = engine.analyze_score_impact(df)
-    return {"condition_win_rates": stats, "total_trades": len(df)}
-
 # Fix BE-4: Added /backtest endpoint
 @app.post("/backtest")
 async def run_backtest_endpoint(days: int = 30):

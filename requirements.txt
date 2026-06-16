@@ -68,4 +68,5 @@ uvicorn==0.46.0
 websocket-client==1.9.0
 websockets==16.0
 yarl==1.23.0
-yfinance
+scipy>=1.11.0
+yfinance==0.2.32

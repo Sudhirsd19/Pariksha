@@ -1,7 +1,6 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
 import pandas as pd
-import pandas as pd
 from datetime import datetime, timedelta, timezone
 
 class AnalyticsEngine:
