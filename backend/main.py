@@ -744,7 +744,8 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
     # Step 3: Run full analysis sequentially (throttled for AngelOne 3 req/sec)
     async def analyze_one(sym):
         try:
-            res = await stock_analyzer.analyze_stock(sym, api_client, index_trends)
+            fallback_price = price_map.get(sym, 0.0)
+            res = await stock_analyzer.analyze_stock(sym, api_client, index_trends, provided_ltp=fallback_price)
             if res and res.get("status") == "success":
                 return res
         except Exception as e:
