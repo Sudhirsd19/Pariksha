@@ -1152,7 +1152,14 @@ async def trading_loop():
 
                 # Active signal engine computes ATR and EMA 50 on the fly; redundant indicator calculations are removed for performance.
                 
-                signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h, symbol=symbol)
+                # Fetch Real-time LTP to avoid stale entry prices from 1m historical candles
+                real_ltp = None
+                try:
+                    real_ltp = await asyncio.to_thread(broker.get_market_data, exchange, symbol, token)
+                except Exception as e:
+                    print(f"[Loop] Failed to fetch LTP for {symbol}: {e}")
+
+                signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h, symbol=symbol, ltp=real_ltp)
                 side = signal_data['signal']
 
                 # --- CORRELATION GUARD (Nifty vs BankNifty) ---

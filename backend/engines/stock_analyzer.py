@@ -147,11 +147,14 @@ class StockAnalyzer:
         # Use real_ltp as base for mock candles so LTP stays accurate
         mock_base = real_ltp if (real_ltp and real_ltp > 0) else 500.0
 
-        # If offline or data failed, create mock/simulated candles for demonstration
+        # If offline or data failed, create mock/simulated candles ONLY for display — NOT for signals
+        mock_data_used = False
         if df_1d is None or df_1d.empty:
             df_1d = self._create_mock_candles(interval="ONE_DAY", count=80, base_price=mock_base)
+            mock_data_used = True
         if df_5m is None or df_5m.empty:
             df_5m = self._create_mock_candles(interval="FIVE_MINUTE", count=100, base_price=mock_base)
+            mock_data_used = True
 
         # 4. Fetch Market Depth, VWAP, OHOL from SmartAPI if available
         market_depth = False
@@ -215,8 +218,12 @@ class StockAnalyzer:
         elif struct_res["in_premium"]:
             value_zone = "Premium"
 
-        # Displacement/OB check (BOS or swing sweeps or general bullish bias)
-        displacement_pass = struct_res["bos_bullish"] or struct_res["fvg_gap"] or struct_res["sweep_low"]
+        # Displacement/OB check — direction-aware:
+        # BUY needs bullish structure; SELL needs bearish structure
+        bullish_displacement = struct_res["bos_bullish"] or struct_res["fvg_gap"] or struct_res["sweep_low"]
+        bearish_displacement = struct_res["bos_bearish"] or struct_res["fvg_gap"] or struct_res["sweep_high"]
+        # For scoring: use whichever is stronger (we determine BUY/SELL from HTF later)
+        displacement_pass = bullish_displacement if htf_trend == "Bullish" else bearish_displacement
 
         # Advanced Intraday Metrics
         avg_volume_10d = 0
@@ -427,7 +434,7 @@ class StockAnalyzer:
         is_after_hours = now_time > dt_time(14, 30)
         
         time_ok = not is_after_hours
-        min_score_required = 85 if is_lunch_hours else 70
+        min_score_required = 90 if is_lunch_hours else 80  # Raised: 80 during prime, 90 during lunch (choppy)
         
         if is_after_hours:
             checklist.append({"item": "Time-of-Day Filter", "status": "Fail", "detail": "After-hours (No new trades after 2:30 PM)", "points": 0})
@@ -436,9 +443,31 @@ class StockAnalyzer:
         else:
             checklist.append({"item": "Time-of-Day Filter", "status": "Pass", "detail": "Active trading hours", "points": 0})
 
-        # Actionable trigger (e.g. score >= 70, not blocked by event, VWAP alignment passes, spread is safe, and time filters pass)
-        vwap_mandatory_pass = vwap_alignment != "Bearish" # Either Bullish or Neutral/Unknown
-        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok and not vwap_overextended and sector_aligned
+        # If SmartAPI was offline and mock candles were used, technical signals are UNRELIABLE
+        # Block actionable regardless of score — mock data cannot be traded
+        if mock_data_used:
+            actionable = False
+
+        # Determine trade side
+        recommendation = "NEUTRAL"
+        if actionable:
+            if htf_trend == "Bullish" and vwap_alignment != "Bearish" and bullish_displacement:
+                recommendation = "BUY"
+            elif htf_trend == "Bearish" and bearish_displacement:
+                recommendation = "SELL"
+
+        # Final: actionable only if recommendation is directional (not neutral)
+        actionable = actionable and recommendation in ["BUY", "SELL"]
+        vwap_mandatory_pass = vwap_alignment != "Bearish"  # Either Bullish or Neutral/Unknown
+        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok and not vwap_overextended and sector_aligned and not mock_data_used
+        if actionable:
+            if htf_trend == "Bullish" and bullish_displacement:
+                recommendation = "BUY"
+            elif htf_trend == "Bearish" and bearish_displacement:
+                recommendation = "SELL"
+            else:
+                recommendation = "NEUTRAL"
+                actionable = False
 
         return {
             "status": "success",
@@ -448,6 +477,8 @@ class StockAnalyzer:
             "ltp": real_ltp if (real_ltp and real_ltp > 0) else float(close_1d),
             "score": score,
             "actionable": actionable,
+            "recommendation": recommendation,
+            "mock_data_used": mock_data_used,
             "htf_trend": htf_trend,
             "value_zone": value_zone,
             "pe": pe,

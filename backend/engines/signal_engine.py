@@ -181,14 +181,9 @@ class SignalEngine:
                 elif bias == "BEARISH" and last_close >= orb_low:
                     orb_passed = False
             else:
-                # Mock fallback
-                first_candle = mtf_df.iloc[0]
-                orb_high = first_candle['high']
-                orb_low = first_candle['low']
-                if bias == "BULLISH" and last_close <= orb_high:
-                    orb_passed = False
-                elif bias == "BEARISH" and last_close >= orb_low:
-                    orb_passed = False
+                # If we don't have today's candles, do not fallback to an old candle!
+                # We simply bypass the ORB filter instead of inverting our logic.
+                pass
         except Exception:
             pass
 
@@ -216,7 +211,7 @@ class SignalEngine:
             'fvg_ready': structure_data.get('fvg_gap', False)
         }
 
-    def generate_signal(self, df_1m, df_5m, df_15m, df_1h, symbol=None):
+    def generate_signal(self, df_1m, df_5m, df_15m, df_1h, symbol=None, ltp=None):
         """Wrapper for main.py — uses ATR-based TP/SL and Order Block validation."""
         if not symbol:
             # Guess symbol based on current price
@@ -250,7 +245,7 @@ class SignalEngine:
         atr_multiplier_sl = 1.5
         atr_multiplier_tp = 3.0  # 2:1 RRR
 
-        entry = df_1m['close'].iloc[-1]
+        entry = ltp if ltp and ltp > 0 else df_1m['close'].iloc[-1]
         side = eval_result['side']
 
         if side == "BUY":
