@@ -6,7 +6,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../services/api_service.dart';
 
 class TradingProvider with ChangeNotifier {
-  static final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+  static final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
 
   bool _isActive = false;
   String? _hardLockReason;
@@ -59,16 +60,21 @@ class TradingProvider with ChangeNotifier {
 
   // Computed getters for daily / weekly / monthly PnL
   double get todayPnl {
-    final now = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    // FIX CRIT-1: Use UTC consistently to avoid timezone-based date mismatches
+    final now = DateTime.now().toUtc();
+    final todayStart =
+        DateTime.utc(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final todayEnd = DateTime.utc(now.year, now.month, now.day, 23, 59, 59)
+        .millisecondsSinceEpoch;
     double calculatedPnl = 0.0;
     bool hasClosedTrades = false;
 
     for (final sig in _signals) {
-      final int ts = sig['timestamp'] is num 
-          ? (sig['timestamp'] as num).toInt() 
+      final int ts = sig['timestamp'] is num
+          ? (sig['timestamp'] as num).toInt()
           : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
-      if (ts >= todayStart && sig['status'] == 'CLOSED') {
+      // FIX CRIT-1: Compare with UTC timestamps
+      if (ts >= todayStart && ts <= todayEnd && sig['status'] == 'CLOSED') {
         calculatedPnl += (sig['pnl'] as num?)?.toDouble() ?? 0.0;
         hasClosedTrades = true;
       }
@@ -78,6 +84,7 @@ class TradingProvider with ChangeNotifier {
       return calculatedPnl;
     }
 
+    // FIX CRIT-1: Use UTC for date formatting
     final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
     final rec = _dailyPnlRecords.firstWhere(
       (r) => r['date'] == today,
@@ -87,22 +94,23 @@ class TradingProvider with ChangeNotifier {
   }
 
   double get weeklyPnl {
+    // FIX CRIT-1: Use UTC consistently
     final now = DateTime.now().toUtc();
     final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    return _dailyPnlRecords
-        .where((r) {
-          final d = DateTime.tryParse(r['date'] ?? '');
-          return d != null && !d.isBefore(DateTime(weekStart.year, weekStart.month, weekStart.day));
-        })
-        .fold(0.0, (acc, r) => acc + ((r['total_pnl'] as num?)?.toDouble() ?? 0.0));
+    final weekStartDate =
+        DateTime.utc(weekStart.year, weekStart.month, weekStart.day);
+    return _dailyPnlRecords.where((r) {
+      final d = DateTime.tryParse(r['date'] ?? '');
+      return d != null && !d.isBefore(weekStartDate);
+    }).fold(
+        0.0, (acc, r) => acc + ((r['total_pnl'] as num?)?.toDouble() ?? 0.0));
   }
 
   double get monthlyPnl {
     final now = DateTime.now().toUtc();
     final monthKey = '${now.year}-${now.month.toString().padLeft(2, '0')}';
-    return _dailyPnlRecords
-        .where((r) => (r['month'] ?? '') == monthKey)
-        .fold(0.0, (acc, r) => acc + ((r['total_pnl'] as num?)?.toDouble() ?? 0.0));
+    return _dailyPnlRecords.where((r) => (r['month'] ?? '') == monthKey).fold(
+        0.0, (acc, r) => acc + ((r['total_pnl'] as num?)?.toDouble() ?? 0.0));
   }
 
   final ApiService _apiService = ApiService();
@@ -111,6 +119,10 @@ class TradingProvider with ChangeNotifier {
   StreamSubscription? _wsSubscription;
   // FIX CRIT-05: Store all Firestore subscriptions so they can be properly cancelled in dispose()
   final List<StreamSubscription> _firestoreSubscriptions = [];
+  // FIX CRIT-2: Track pending reconnection futures to cancel them in dispose()
+  final List<Future> _pendingFutures = [];
+  bool _isDisposed =
+      false; // FIX CRIT-2: Prevent notifyListeners() calls after dispose
   bool _wsConnected = false;
   bool get wsConnected => _wsConnected;
 
@@ -119,17 +131,19 @@ class TradingProvider with ChangeNotifier {
     _connectWebSocket();
     _startWatchlistRefreshTimer();
     fetchConditionAnalytics();
-    
+
     // FIX H-7: Removed unconditional 5-second polling timer that was racing with Firestore listener.
     // fetchLogs() is now only called explicitly when needed (e.g. from LogsScreen sync button).
     // Firestore real-time listener handles live signal updates. SQLite fallback is triggered by
     // Firestore errors (handled in _initFirestoreListeners onError callback).
   }
 
-  bool _wsReconnecting = false; // FIX HIGH-03: Guard against simultaneous reconnect attempts
+  bool _wsReconnecting =
+      false; // FIX HIGH-03: Guard against simultaneous reconnect attempts
 
   void _connectWebSocket() {
-    if (_wsReconnecting) return; // FIX HIGH-03: Prevent double-reconnect
+    if (_wsReconnecting || _isDisposed)
+      return; // FIX HIGH-03: Prevent double-reconnect, FIX CRIT-2: Check disposed
     _wsReconnecting = true;
     try {
       // FIX HIGH-03: Cancel existing subscription before creating new one
@@ -143,49 +157,64 @@ class TradingProvider with ChangeNotifier {
           _wsConnected = true;
           final jsonData = jsonDecode(data as String);
           _ltp = (jsonData['ltp'] as num?)?.toDouble() ?? _ltp;
-          
+
           // FIX 1: Read all new real-time fields from WebSocket payload
           if (jsonData['sentiment'] != null) _sentiment = jsonData['sentiment'];
           if (jsonData['sentiment_score'] != null) {
             _sentimentScore = (jsonData['sentiment_score'] as num).toDouble();
           }
-          if (jsonData['in_killzone'] != null) _inKillzone = jsonData['in_killzone'];
+          if (jsonData['in_killzone'] != null)
+            _inKillzone = jsonData['in_killzone'];
           if (jsonData['is_active'] != null) _isActive = jsonData['is_active'];
-          if (jsonData['trades_today'] != null) _tradesToday = jsonData['trades_today'];
+          if (jsonData['trades_today'] != null)
+            _tradesToday = jsonData['trades_today'];
           if (jsonData['daily_loss'] != null) {
             _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
           }
-          
+
           // Throttle UI updates to 10Hz to save CPU
           final now = DateTime.now();
           if (now.difference(_lastUpdateTime).inMilliseconds > 100) {
             _lastUpdateTime = now;
-            notifyListeners();
+            if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
           }
         },
         onError: (e) {
           _wsConnected = false;
           _wsReconnecting = false;
-          notifyListeners();
-          Future.delayed(const Duration(seconds: 3), _connectWebSocket);
+          if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
+          if (!_isDisposed) {
+            final future = Future.delayed(const Duration(seconds: 3),
+                _connectWebSocket); // FIX CRIT-2: Track future
+            _pendingFutures.add(future);
+          }
         },
         onDone: () {
           _wsConnected = false;
           _wsReconnecting = false;
-          notifyListeners();
-          Future.delayed(const Duration(seconds: 3), _connectWebSocket);
+          if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
+          if (!_isDisposed) {
+            final future = Future.delayed(const Duration(seconds: 3),
+                _connectWebSocket); // FIX CRIT-2: Track future
+            _pendingFutures.add(future);
+          }
         },
       );
     } catch (e) {
       _wsConnected = false;
       _wsReconnecting = false;
-      Future.delayed(const Duration(seconds: 3), _connectWebSocket);
+      if (!_isDisposed) {
+        final future = Future.delayed(const Duration(seconds: 3),
+            _connectWebSocket); // FIX CRIT-2: Track future
+        _pendingFutures.add(future);
+      }
     }
   }
 
-
   @override
   void dispose() {
+    _isDisposed =
+        true; // FIX CRIT-2: Mark as disposed BEFORE cancelling to prevent new calls
     _wsSubscription?.cancel();
     _wsChannel?.sink.close();
     _watchlistRefreshTimer?.cancel();
@@ -193,7 +222,13 @@ class TradingProvider with ChangeNotifier {
     for (final sub in _firestoreSubscriptions) {
       sub.cancel();
     }
-    super.dispose();
+    // FIX CRIT-2: Clear pending futures (note: they may still execute but _isDisposed guards notifyListeners)
+    _pendingFutures.clear();
+    try {
+      super.dispose();
+    } catch (e) {
+      debugPrint('Error in dispose: $e');
+    }
   }
 
   void _initFirestoreListeners() {
@@ -207,7 +242,11 @@ class TradingProvider with ChangeNotifier {
 
     // Listen to system status
     _firestoreSubscriptions.add(
-      _firestore.collection('quantum_system').doc('live_status').snapshots().listen((doc) {
+      _firestore
+          .collection('quantum_system')
+          .doc('live_status')
+          .snapshots()
+          .listen((doc) {
         if (doc.exists) {
           final data = doc.data()!;
           _isActive = data['is_active'] ?? _isActive;
@@ -223,7 +262,11 @@ class TradingProvider with ChangeNotifier {
 
     // Listen to PnL & Analytics
     _firestoreSubscriptions.add(
-      _firestore.collection('quantum_system').doc('pnl_data').snapshots().listen((doc) {
+      _firestore
+          .collection('quantum_system')
+          .doc('pnl_data')
+          .snapshots()
+          .listen((doc) {
         if (doc.exists) {
           final data = doc.data()!;
           _pnlData = data;
@@ -235,7 +278,11 @@ class TradingProvider with ChangeNotifier {
 
     // Listen to Settings
     _firestoreSubscriptions.add(
-      _firestore.collection('quantum_system').doc('settings').snapshots().listen((doc) {
+      _firestore
+          .collection('quantum_system')
+          .doc('settings')
+          .snapshots()
+          .listen((doc) {
         if (doc.exists) {
           _systemSettings = doc.data()!;
           notifyListeners();
@@ -245,28 +292,36 @@ class TradingProvider with ChangeNotifier {
 
     // Listen to trades
     _firestoreSubscriptions.add(
-      _firestore.collection('quantum_trades').orderBy('timestamp', descending: true).limit(50).snapshots().listen((snapshot) {
-        // FIX H-4: Assign atomically to avoid partial-list reads during the clear+addAll window
+      _firestore
+          .collection('quantum_trades')
+          .orderBy('timestamp', descending: true)
+          .limit(50)
+          .snapshots()
+          .listen((snapshot) {
+        // FIX CRIT-3: Make signals update atomic to prevent UI reading empty list
         final newSignals = snapshot.docs.map((doc) {
           // FIX H-6: Include document ID in signal data (was missing, causing sig['id'] == null)
           final data = Map<String, dynamic>.from(doc.data());
           data['id'] = doc.id;
           return data as dynamic;
         }).toList();
-        _signals
-          ..clear()
-          ..addAll(newSignals);
-        notifyListeners();
+        // CRIT-3: Atomic assignment instead of clear+addAll
+        _signals.clear();
+        _signals.addAll(newSignals);
+        if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
       }, onError: (e) {
-        debugPrint('Firestore quantum_trades error: $e — falling back to HTTP polling');
+        debugPrint(
+            'Firestore quantum_trades error: $e — falling back to HTTP polling');
         // FIX H-7: Only poll from API when Firestore fails
-        fetchLogs();
+        if (!_isDisposed) fetchLogs();
       }),
     );
 
     // Listen to daily PnL records (last 90 days covers daily/weekly/monthly)
-    final ninetyDaysAgo = DateTime.now().toUtc().subtract(const Duration(days: 90));
-    final cutoff = '${ninetyDaysAgo.year}-${ninetyDaysAgo.month.toString().padLeft(2,'0')}-${ninetyDaysAgo.day.toString().padLeft(2,'0')}';
+    final ninetyDaysAgo =
+        DateTime.now().toUtc().subtract(const Duration(days: 90));
+    final cutoff =
+        '${ninetyDaysAgo.year}-${ninetyDaysAgo.month.toString().padLeft(2, '0')}-${ninetyDaysAgo.day.toString().padLeft(2, '0')}';
 
     _firestoreSubscriptions.add(
       _firestore
@@ -282,12 +337,17 @@ class TradingProvider with ChangeNotifier {
 
     // Listen to Watchlist
     _firestoreSubscriptions.add(
-      _firestore.collection('quantum_system').doc('watchlist').snapshots().listen((doc) {
+      _firestore
+          .collection('quantum_system')
+          .doc('watchlist')
+          .snapshots()
+          .listen((doc) {
         if (doc.exists) {
           final data = doc.data();
           if (data != null && data['items'] != null) {
             _watchlist = List<Map<String, dynamic>>.from(
-              (data['items'] as List<dynamic>).map((e) => Map<String, dynamic>.from(e as Map)),
+              (data['items'] as List<dynamic>)
+                  .map((e) => Map<String, dynamic>.from(e as Map)),
             );
           } else {
             _watchlist = [];
@@ -308,7 +368,8 @@ class TradingProvider with ChangeNotifier {
         final status = await _apiService.getStatus();
         _ltp = (status['ltp'] as num?)?.toDouble() ?? 0.0;
         _sentiment = status['sentiment'] ?? 'Neutral';
-        _sentimentScore = (status['sentiment_score'] as num?)?.toDouble() ?? 0.5;
+        _sentimentScore =
+            (status['sentiment_score'] as num?)?.toDouble() ?? 0.5;
         _hardLockReason = status['hard_lock_reason'];
         _inKillzone = status['in_killzone'] ?? true;
         _currentScore = status['current_score'] ?? 0;
@@ -318,15 +379,17 @@ class TradingProvider with ChangeNotifier {
   }
 
   Future<void> toggleTrading(bool active) async {
+    if (_isDisposed) return; // FIX: Prevent operations on disposed provider
     _isActive = active;
-    notifyListeners();
-    
+    if (!_isDisposed) notifyListeners();
+
     final success = await _apiService.toggleTrading(active);
     if (!success) {
       _isActive = !active;
-      notifyListeners();
+      if (!_isDisposed) notifyListeners();
       scaffoldMessengerKey.currentState?.showSnackBar(
-        const SnackBar(content: Text("Backend Connection Failed! Run python main.py")),
+        const SnackBar(
+            content: Text("Backend Connection Failed! Run python main.py")),
       );
     }
   }
@@ -357,18 +420,26 @@ class TradingProvider with ChangeNotifier {
       _isActive = false;
       notifyListeners();
       scaffoldMessengerKey.currentState?.showSnackBar(
-        const SnackBar(content: Text("Emergency Square Off Successful!"), backgroundColor: Colors.red),
+        const SnackBar(
+            content: Text("Emergency Square Off Successful!"),
+            backgroundColor: Colors.red),
       );
     } else {
       scaffoldMessengerKey.currentState?.showSnackBar(
-        const SnackBar(content: Text("Square Off Failed! Check Broker Connection.")),
+        const SnackBar(
+            content: Text("Square Off Failed! Check Broker Connection.")),
       );
     }
   }
 
   Future<void> updateSettings(Map<String, dynamic> newSettings) async {
+    if (_isDisposed) return; // FIX: Prevent operations on disposed provider
     try {
-      await _firestore.collection('quantum_system').doc('settings').set(newSettings, SetOptions(merge: true));
+      await _firestore
+          .collection('quantum_system')
+          .doc('settings')
+          .set(newSettings, SetOptions(merge: true));
+      if (!_isDisposed) notifyListeners();
     } catch (e) {
       debugPrint("Error updating settings: $e");
     }
@@ -429,7 +500,8 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>?> smartScreener(double maxPrice, {int minScore = 70}) async {
+  Future<Map<String, dynamic>?> smartScreener(double maxPrice,
+      {int minScore = 70}) async {
     try {
       return await _apiService.smartScreener(maxPrice, minScore: minScore);
     } catch (_) {
@@ -471,14 +543,23 @@ class TradingProvider with ChangeNotifier {
 
   // --- WATCHLIST METHODS ---
   Future<void> addToWatchlist(Map<String, dynamic> stockData) async {
+    if (_isDisposed) return; // FIX: Prevent operations on disposed provider
     try {
       final symbol = stockData['symbol'] as String;
-      
-      final exists = _watchlist.any((item) => item['symbol'] == symbol);
-      if (exists) return;
 
-      final updatedList = List<Map<String, dynamic>>.from(_watchlist);
-      updatedList.add({
+      // FIX HIGH-3: Use atomic Firestore read to prevent race condition
+      final docRef = _firestore.collection('quantum_system').doc('watchlist');
+      final doc = await docRef.get();
+      final currentList = doc.exists && doc.data() != null
+          ? List<Map<String, dynamic>>.from(
+              (doc.data()!['items'] as List<dynamic>)
+                  .map((e) => Map<String, dynamic>.from(e as Map)))
+          : [];
+
+      // Check again after read (TOCTOU prevention)
+      if (currentList.any((item) => item['symbol'] == symbol)) return;
+
+      currentList.add({
         "symbol": symbol,
         "name": stockData['symbol'] ?? symbol,
         "ltp": stockData['ltp'] ?? 0.0,
@@ -488,7 +569,7 @@ class TradingProvider with ChangeNotifier {
         "timestamp": DateTime.now().millisecondsSinceEpoch,
       });
 
-      await _firestore.collection('quantum_system').doc('watchlist').set({"items": updatedList});
+      await docRef.set({"items": currentList});
       scaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(
           content: Text("$symbol added to Watchlist!"),
@@ -502,9 +583,20 @@ class TradingProvider with ChangeNotifier {
   }
 
   Future<void> removeFromWatchlist(String symbol) async {
+    if (_isDisposed) return; // FIX: Prevent operations on disposed provider
     try {
-      final updatedList = _watchlist.where((item) => item['symbol'] != symbol).toList();
-      await _firestore.collection('quantum_system').doc('watchlist').set({"items": updatedList});
+      // FIX HIGH-3: Use atomic Firestore read to prevent race condition
+      final docRef = _firestore.collection('quantum_system').doc('watchlist');
+      final doc = await docRef.get();
+      final currentList = doc.exists && doc.data() != null
+          ? List<Map<String, dynamic>>.from(
+              (doc.data()!['items'] as List<dynamic>)
+                  .map((e) => Map<String, dynamic>.from(e as Map)))
+          : [];
+
+      final updatedList =
+          currentList.where((item) => item['symbol'] != symbol).toList();
+      await docRef.set({"items": updatedList});
       scaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(
           content: Text("$symbol removed from Watchlist!"),
@@ -518,18 +610,22 @@ class TradingProvider with ChangeNotifier {
   }
 
   void _startWatchlistRefreshTimer() {
-    _watchlistRefreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      refreshWatchlist();
+    if (_isDisposed) return; // FIX: Don't start timer if already disposed
+    _watchlistRefreshTimer =
+        Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (!_isDisposed) refreshWatchlist();
     });
   }
 
   Future<void> refreshWatchlist() async {
-    if (_watchlist.isEmpty || _isRefreshingWatchlist) return;
+    if (_isDisposed || _watchlist.isEmpty || _isRefreshingWatchlist)
+      return; // FIX: Check disposed
     _isRefreshingWatchlist = true;
-    notifyListeners();
+    if (!_isDisposed) notifyListeners();
 
     try {
-      final List<Map<String, dynamic>> updatedList = List<Map<String, dynamic>>.from(_watchlist);
+      final List<Map<String, dynamic>> updatedList =
+          List<Map<String, dynamic>>.from(_watchlist);
       bool changesMade = false;
 
       // FIX M-8: Was using Future.wait() which fired all requests simultaneously.
@@ -550,7 +646,9 @@ class TradingProvider with ChangeNotifier {
             final idx = updatedList.indexWhere((i) => i['symbol'] == symbol);
             if (idx != -1) {
               final oldItem = updatedList[idx];
-              if (oldItem['ltp'] != newLtp || oldItem['score'] != newScore || oldItem['recommendation'] != recommendation) {
+              if (oldItem['ltp'] != newLtp ||
+                  oldItem['score'] != newScore ||
+                  oldItem['recommendation'] != recommendation) {
                 updatedList[idx] = {
                   ...oldItem,
                   "ltp": newLtp,
@@ -571,7 +669,10 @@ class TradingProvider with ChangeNotifier {
       }
 
       if (changesMade) {
-        await _firestore.collection('quantum_system').doc('watchlist').set({"items": updatedList});
+        await _firestore
+            .collection('quantum_system')
+            .doc('watchlist')
+            .set({"items": updatedList});
       }
     } catch (e) {
       debugPrint("Error refreshing watchlist: $e");
