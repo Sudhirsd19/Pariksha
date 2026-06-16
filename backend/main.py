@@ -790,7 +790,7 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
     }
 
 @app.get("/analyze-stock")
-async def analyze_stock(symbol: str):
+async def analyze_stock(symbol: str, ltp: float = 0.0):
     symbol = symbol.upper()
     from backend.engines.stock_analyzer import stock_analyzer
     
@@ -815,7 +815,7 @@ async def analyze_stock(symbol: str):
         print(f"[AnalyzeStock] Trend fetch failed for index {index_ticker}: {e}")
             
     api_client = broker.smart_api if broker.session else None
-    res = await stock_analyzer.analyze_stock(symbol, api_client, index_trends)
+    res = await stock_analyzer.analyze_stock(symbol, api_client, index_trends, provided_ltp=ltp)
     return res
 
 def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, price):
@@ -914,9 +914,14 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         return res
         
     if not res.get("actionable", False):
+        failed_checks = [c["item"] for c in res.get("checklist", []) if c.get("status") == "Fail"]
+        fail_reasons = ", ".join(failed_checks) if failed_checks else "Unknown"
+        if res.get("mock_data_used", False):
+            fail_reasons += " (Mock Data Used due to API failure)"
+            
         return {
             "status": "error", 
-            "message": f"Execution Blocked: {symbol} does not meet strict technical criteria right now (Score: {res.get('score', 0)}%)."
+            "message": f"Execution Blocked: {symbol} does not meet strict technical criteria. Failed: {fail_reasons} (Score: {res.get('score', 0)}%)."
         }
         
     token = res["token"]

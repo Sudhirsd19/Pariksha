@@ -464,13 +464,13 @@ class TradingProvider with ChangeNotifier {
   Map<String, dynamic>? get scannedStockData => _scannedStockData;
   bool get isScanning => _isScanning;
 
-  Future<void> scanStock(String symbol) async {
+  Future<void> scanStock(String symbol, {double? ltp}) async {
     _isScanning = true;
     _scannedStockData = null;
     notifyListeners();
 
     try {
-      final res = await _apiService.analyzeStock(symbol);
+      final res = await _apiService.analyzeStock(symbol, ltp: ltp);
       if (res != null) {
         _scannedStockData = res;
       } else {

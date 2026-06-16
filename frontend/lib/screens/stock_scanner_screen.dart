@@ -193,10 +193,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     super.dispose();
   }
 
-  void _triggerScan(String symbol) {
+  void _triggerScan(String symbol, {double? ltp}) {
     if (symbol.isEmpty) return;
     _searchFocusNode.unfocus();
-    Provider.of<TradingProvider>(context, listen: false).scanStock(symbol.trim().toUpperCase());
+    Provider.of<TradingProvider>(context, listen: false).scanStock(symbol.trim().toUpperCase(), ltp: ltp);
   }
 
   @override
@@ -1475,7 +1475,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     GestureDetector(
                       onTap: () {
                         _searchController.text = symbol;
-                        _triggerScan(symbol);
+                        _triggerScan(symbol, ltp: ltp);
                       },
                       child: Row(
                         children: [
