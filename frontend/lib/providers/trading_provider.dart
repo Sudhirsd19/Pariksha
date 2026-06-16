@@ -640,12 +640,12 @@ class TradingProvider with ChangeNotifier {
   }
 
   void _startWatchlistRefreshTimer() {
-    if (_isDisposed) return; // FIX: Don't start timer if already disposed
-    // FIX: Disabled HTTP polling for Watchlist. Watchlist now updates via WebSocket `symbol_ltps` instantly.
-    // _watchlistRefreshTimer =
-    //     Timer.periodic(const Duration(seconds: 60), (timer) {
-    //   if (!_isDisposed) refreshWatchlist();
-    // });
+    if (_isDisposed) return;
+    
+    // Auto-update watchlist via API every 60 seconds to fetch latest Auto-Router signals
+    _watchlistRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      if (!_isDisposed) refreshWatchlist();
+    });
   }
 
   Future<void> refreshWatchlist() async {
