@@ -2050,7 +2050,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                     ],
                                   ),
                                   Text(
-                                    "$engineUsed",
+                                    engineUsed,
                                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                                   ),
                                   const SizedBox(height: 4),
