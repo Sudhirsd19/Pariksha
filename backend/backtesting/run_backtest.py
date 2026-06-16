@@ -87,7 +87,8 @@ def run_historical_backtest(symbol="^NSEI", days=30):
             continue # Don't take new trades while one is open
 
         # We pass window_5m as both 1m and 5m for backtest simulation due to yf limitations
-        signal_data = signal_engine.generate_signal(window_5m, window_5m, window_15m, window_1h, symbol="NIFTY", ltp=current_price)
+        # Enable backtest override to relax live-only filters during historical runs
+        signal_data = signal_engine.generate_signal(window_5m, window_5m, window_15m, window_1h, symbol="NIFTY", ltp=current_price, backtest_override=True)
         
         if signal_data and signal_data.get("signal") in ["BUY", "SELL"]:
             side = signal_data["signal"]

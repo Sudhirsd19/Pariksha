@@ -829,7 +829,7 @@ def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, p
     )
 
 @app.post("/execute-stock-trade")
-async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_tasks: BackgroundTasks = None):
+async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float = 0.0, background_tasks: BackgroundTasks = None):
     # ── MARKET HOURS GUARD ─────────────────────────────────────────────────
     # Intraday entries only allowed: Mon-Fri, 9:15 AM – 2:30 PM IST
     # After 2:30 PM: less than 40 min left → auto sq-off at 3:10 PM → bad RRR
@@ -909,7 +909,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, background_t
         return {"status": "error", "message": f"Execution Blocked by Risk Manager: {reason}"}
 
     from backend.engines.stock_analyzer import stock_analyzer
-    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api)
+    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api, None, ltp)
     if res.get("status") == "error":
         return res
         

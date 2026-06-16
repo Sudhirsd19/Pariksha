@@ -71,7 +71,7 @@ class StockAnalyzer:
     def __init__(self):
         self.struct_engine = StructureEngine(lookback=20)
 
-    async def analyze_stock(self, symbol: str, smart_api=None, index_trends = None) -> dict:
+    async def analyze_stock(self, symbol: str, smart_api=None, index_trends = None, provided_ltp: float = 0.0) -> dict:
         """
         Runs full technical and fundamental analysis on a stock.
         symbol: e.g. 'RELIANCE'
@@ -98,14 +98,10 @@ class StockAnalyzer:
         else:
             # Fetch single index trend dynamically if not pre-cached
             try:
-                ticker_obj = yf.Ticker(index_ticker)
-                fast_info = await asyncio.to_thread(lambda: ticker_obj.fast_info)
-                last_price = float(getattr(fast_info, "last_price", 0))
-                prev_close = float(getattr(fast_info, "previous_close", 0))
-                if last_price > 0 and prev_close > 0:
-                    sector_trend = "Bullish" if last_price > prev_close else "Bearish"
-            except:
-                pass
+                sector_trend = await asyncio.to_thread(self.struct_engine.get_htf_trend, index_ticker)
+            except Exception as e:
+                print(f"Failed to fetch HTF trend for {index_ticker}: {e}")
+                sector_trend = "Neutral"
 
         # 2. Fetch LTP from yfinance (free, no auth) as reliable real-time price
         real_ltp = None
@@ -121,6 +117,10 @@ class StockAnalyzer:
                     real_ltp = float(getattr(fast_info, 'last_price', 0) or 0)
             except Exception as e:
                 print(f"[StockAnalyzer] yfinance LTP fetch failed for {symbol}: {e}")
+                
+        if not real_ltp or real_ltp <= 0:
+            if provided_ltp > 0:
+                real_ltp = provided_ltp
                 
         if not real_ltp or real_ltp <= 0:
             return {"status": "error", "message": f"Real price for {symbol} could not be fetched. Market might be closed or symbol invalid."}

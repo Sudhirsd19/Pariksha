@@ -514,9 +514,9 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
-  Future<bool> executeStockTrade(String symbol, String side, int qty) async {
+  Future<bool> executeStockTrade(String symbol, String side, int qty, {double? ltp}) async {
     try {
-      final res = await _apiService.executeStockTrade(symbol, side, qty);
+      final res = await _apiService.executeStockTrade(symbol, side, qty, ltp: ltp);
       if (res != null && res['status'] == 'success') {
         scaffoldMessengerKey.currentState?.showSnackBar(
           SnackBar(

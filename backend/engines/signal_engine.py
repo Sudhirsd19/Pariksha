@@ -150,6 +150,13 @@ class SignalEngine:
         if bias == "BULLISH" and structure_data.get('bullish_fvg', False): score += 1
         if bias == "BEARISH" and structure_data.get('bearish_fvg', False): score += 1
         
+        # Allow backtest override to relax strict live filters for bulk historical testing
+        backtest_override = False
+        try:
+            backtest_override = bool(session_info.get('backtest_override', False))
+        except Exception:
+            backtest_override = False
+
         # 1. ADX Trend Strength Check
         adx_val = self.calculate_adx(mtf_df)
         adx_ok = adx_val >= 20
@@ -190,19 +197,23 @@ class SignalEngine:
             print(f"[SignalEngine] ORB filter error: {e}")  # log instead of silent swallow
 
         side = None
-        # Ultra-Strict Trigger: 
-        # 1. Must be in Killzone 
-        # 2. Must be aligned with HTF Trend
-        # 3. Must be in the right zone (Discount for BUY, Premium for SELL)
-        # 4. Min score 8
-        # 5. OI must be supportive (PCR check)
-        # 6. ORB range must be broken
-        if in_killzone and bias == htf_trend and score >= 8 and oi_supportive and orb_passed:
+        # Ultra-Strict Trigger for live trading. For backtests we optionally relax these.
+        required_score = 8
+        if backtest_override:
+            # In backtest mode, be more permissive to gather signal behavior
+            in_killzone = True
+            oi_supportive = True
+            orb_passed = True
+            required_score = 4
+
+        if in_killzone and bias == htf_trend and score >= required_score and oi_supportive and orb_passed:
             if phase != "CONSOLIDATION":
-                if bias == "BULLISH" and structure_data['in_discount']:
-                    if structure_data['bos_bullish']: side = "BUY"
-                elif bias == "BEARISH" and structure_data['in_premium']:
-                    if structure_data['bos_bearish']: side = "SELL"
+                if bias == "BULLISH" and structure_data.get('in_discount', False):
+                    if structure_data.get('bos_bullish', False):
+                        side = "BUY"
+                elif bias == "BEARISH" and structure_data.get('in_premium', False):
+                    if structure_data.get('bos_bearish', False):
+                        side = "SELL"
             
         return {
             'side': side,
@@ -213,7 +224,7 @@ class SignalEngine:
             'fvg_ready': structure_data.get('fvg_gap', False)
         }
 
-    def generate_signal(self, df_1m, df_5m, df_15m, df_1h, symbol=None, ltp=None):
+    def generate_signal(self, df_1m, df_5m, df_15m, df_1h, symbol=None, ltp=None, backtest_override=False):
         """Wrapper for main.py — uses ATR-based TP/SL and Order Block validation."""
         if not symbol:
             # Guess symbol based on current price
@@ -243,7 +254,9 @@ class SignalEngine:
             'pdl':  prev_day_candles['low'].min()  if not prev_day_candles.empty else df_1h['low'].iloc[-2],
         }
 
-        eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True}, symbol=symbol)
+        # Pass a backtest_override flag via session_info when running historical backtests
+        # Pass backtest_override through session_info when requested by callers
+        eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True, 'backtest_override': bool(backtest_override)}, symbol=symbol)
 
         # FIX: Proper ATR — rolling mean of true ranges, not raw high-low range
         # The old calculation was: (rolling_max - rolling_min) which is a range, not ATR

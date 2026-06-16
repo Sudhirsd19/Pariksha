@@ -141,11 +141,12 @@ class ApiService {
     return null;
   }
 
-  Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side, int qty) async {
+  Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side, int qty, {double? ltp}) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/execute-stock-trade?symbol=$symbol&side=$side&qty=$qty'),
-      );
+      final url = ltp != null 
+          ? '$baseUrl/execute-stock-trade?symbol=$symbol&side=$side&qty=$qty&ltp=$ltp'
+          : '$baseUrl/execute-stock-trade?symbol=$symbol&side=$side&qty=$qty';
+      final response = await http.post(Uri.parse(url));
       if (response.statusCode == 200) {
         return json.decode(response.body);
       }

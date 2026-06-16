@@ -93,6 +93,38 @@ class BacktestEngine:
             'Avg PnL per Trade': total_pnl / len(df)
         }
 
+    def export_trades_csv(self, path):
+        """Export executed trades to a CSV file at `path`. Overwrites if exists."""
+        import csv
+        if not self.trades:
+            return False
+        keys = list(self.trades[0].keys())
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                for t in self.trades:
+                    writer.writerow(t)
+            return True
+        except Exception:
+            return False
+
+    def export_metrics_csv(self, path):
+        """Export summarized metrics to CSV (single-row)."""
+        import csv
+        metrics = self.get_metrics()
+        if isinstance(metrics, str):
+            return False
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['metric', 'value'])
+                for k, v in metrics.items():
+                    writer.writerow([k, v])
+            return True
+        except Exception:
+            return False
+
     def calculate_max_drawdown(self):
         equity_series = pd.Series(self.equity_curve)
         rolling_max = equity_series.cummax()

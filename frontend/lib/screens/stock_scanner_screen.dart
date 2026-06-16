@@ -1295,7 +1295,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     onPressed: isValid
                         ? () async {
                             Navigator.pop(ctx);
-                            await provider.executeStockTrade(symbol, side, selectedQty);
+                            await provider.executeStockTrade(symbol, side, selectedQty, ltp: ltp);
                           }
                         : null,
                     child: Text(
