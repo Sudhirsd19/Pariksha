@@ -1006,25 +1006,19 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
             reason = f"Directional exposure limit hit for {side} trades"
         return {"status": "error", "message": f"Execution Blocked by Risk Manager: {reason}"}
 
-    from backend.engines.stock_analyzer import stock_analyzer
-    res = await stock_analyzer.analyze_stock(symbol, broker.smart_api, None, ltp)
+    res = auto_router.get_signals_for_symbol(symbol)
     if res.get("status") == "error":
         return res
         
-    if not res.get("actionable", False):
-        failed_checks = [c["item"] for c in res.get("checklist", []) if c.get("status") == "Fail"]
-        fail_reasons = ", ".join(failed_checks) if failed_checks else "Unknown"
-        if res.get("mock_data_used", False):
-            fail_reasons += " (Mock Data Used due to API failure)"
-            
-        return {
-            "status": "error", 
-            "message": f"Execution Blocked: {symbol} does not meet strict technical criteria. Failed: {fail_reasons} (Score: {res.get('score', 0)}%)."
-        }
-        
-    token = res["token"]
-    trading_symbol = res["trading_symbol"]
-    price = res["ltp"]
+    # We do not block manual execution based on strict criteria anymore
+    # because the user is executing this from the new Auto-Router Watchlist UI.
+    
+    from backend.instrument_manager import instrument_manager
+    inst = instrument_manager.get_instrument_by_symbol(f"{symbol}-EQ")
+    
+    token = inst.get("token") if inst else "0"
+    trading_symbol = inst.get("symbol") if inst else f"{symbol}-EQ"
+    price = ltp if ltp > 0 else res.get("ltp", 0.0)
     
     if price <= 0:
         return {"status": "error", "message": "Invalid stock price"}
@@ -1060,7 +1054,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         "actual_entry": price,
         "sl": sl,
         "tp": tp,
-        "reason": f"ALGO EQUITY {side} - Score: {res['score']}%",
+        "reason": f"ALGO EQUITY {side} - ADX: {res.get('adx_score', 0)} ({res.get('engine_used', 'Manual')})",
         "is_paper": is_paper_trading,
         "timestamp": int(time.time() * 1000),
         "token": token,
@@ -1346,16 +1340,8 @@ async def trading_loop():
                     continue
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
-                    # NEW: Fundamental & Technical Validation from Stock Analyzer
-                    # M-4 Fix: StockAnalyzer instantiated globally (see line 98)
-                    analyzer_res = await stock_analyzer.analyze_stock(symbol, broker.smart_api, None)
-                    if analyzer_res.get("status") == "success":
-                        if not analyzer_res.get("actionable", False):
-                            print(f"[StockAnalyzer] Rejecting {side} on {symbol}: Scorecard Failed (Score: {analyzer_res.get('score', 0)})")
-                            continue
-                        # Attach scorecard info to signal data for analytics logging
-                        signal_data["score"] = analyzer_res.get("score")
-                        signal_data["score_breakdown"] = analyzer_res.get("checklist", [])
+                    # Old stock_analyzer scorecard validation has been deprecated and removed.
+                    # The signal_engine and correlation_engine now hold full authority for Index trades.
 
                     # FIX 2: CooldownEngine check — prevents trades within 10 min window
                     if not cooldown_engine.can_trade():
