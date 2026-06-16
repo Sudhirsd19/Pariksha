@@ -683,17 +683,13 @@ class TradingProvider with ChangeNotifier {
 
   Future<void> _triggerSilentBackgroundReval(Map<String, dynamic> item) async {
     try {
-        // Don't send ltp if we want backend to fetch fresh or use its own websocket!
-        final response = await http.get(Uri.parse('http://127.0.0.1:8000/api/scanner/scan?symbol=${item['symbol']}'));
-        if (response.statusCode == 200) {
-          final result = jsonDecode(response.body);
-          if (result['status'] == 'success') {
-            item['adx_score'] = result['adx_score'];
-            item['engine_used'] = result['engine_used'];
-            item['signals'] = result['signals'];
-            item['ltp'] = result['ltp'];
-            if (!_isDisposed) notifyListeners();
-          }
+        final result = await _apiService.analyzeStock(item['symbol']);
+        if (result != null && result['status'] == 'success') {
+          item['adx_score'] = result['adx_score'];
+          item['engine_used'] = result['engine_used'];
+          item['signals'] = result['signals'];
+          item['ltp'] = result['ltp'];
+          if (!_isDisposed) notifyListeners();
         }
     } catch (e) {
         debugPrint("Silent reval failed for ${item['symbol']}: $e");
