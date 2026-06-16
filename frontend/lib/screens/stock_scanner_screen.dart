@@ -540,11 +540,13 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   }
 
   Widget _buildScanResults(BuildContext context, TradingProvider provider, Map<String, dynamic> data) {
-    final int score = data['score'] ?? 0;
-    final bool actionable = data['actionable'] ?? false;
+    final double adxScore = (data['adx_score'] as num?)?.toDouble() ?? 0.0;
+    final String engineUsed = data['engine_used'] ?? "";
+    final List signals = data['signals'] ?? [];
+    final bool actionable = signals.isNotEmpty;
+    
     final String symbol = data['symbol'] ?? "";
     final double ltp = (data['ltp'] as num?)?.toDouble() ?? 0.0;
-    final checklist = data['checklist'] as List<dynamic>? ?? [];
 
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
@@ -562,12 +564,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     final bool hasActive = activeTrade != null;
     final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
-    Color scoreColor = Colors.redAccent;
-    if (score >= 70) {
-      scoreColor = Colors.greenAccent;
-    } else if (score >= 40) {
-      scoreColor = Colors.orangeAccent;
-    }
+    Color scoreColor = adxScore >= 30 ? Colors.greenAccent : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
 
     return Column(
       children: [
@@ -693,20 +690,33 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                       fit: StackFit.expand,
                       children: [
                         CircularProgressIndicator(
-                          value: score / 100,
+                          value: (adxScore / 100).clamp(0.0, 1.0),
                           strokeWidth: 6,
                           backgroundColor: Colors.white.withValues(alpha: 0.05),
                           color: scoreColor,
                           strokeCap: StrokeCap.round,
                         ),
                         Center(
-                          child: Text(
-                            "$score%",
-                            style: TextStyle(
-                              color: scoreColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                            ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                adxScore.toStringAsFixed(1),
+                                style: TextStyle(
+                                  color: scoreColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              Text(
+                                "ADX",
+                                style: TextStyle(
+                                  color: scoreColor.withValues(alpha: 0.7),
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -719,99 +729,92 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
         ),
         const SizedBox(height: 20),
 
-        // Checklist Items
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.02),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "VERIFICATION CHECKLIST",
-                style: TextStyle(
-                  color: Colors.white30,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2,
+        // Signal Items
+        if (signals.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.02),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "AUTO-ROUTER SIGNALS ($engineUsed)".toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white30,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: checklist.length,
-                separatorBuilder: (context, idx) => Divider(
-                  color: Colors.white.withValues(alpha: 0.03),
-                  height: 24,
+                const SizedBox(height: 16),
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: signals.length,
+                  separatorBuilder: (context, idx) => Divider(
+                    color: Colors.white.withValues(alpha: 0.03),
+                    height: 24,
+                  ),
+                  itemBuilder: (context, idx) {
+                    final item = signals[idx];
+                    final String type = item['type'] ?? "UNKNOWN";
+                    final String time = item['time'] ?? "";
+                    final String reason = item['reason'] ?? "";
+
+                    final bool isBuy = type == 'BUY';
+                    final IconData icon = isBuy ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded;
+                    final Color iconColor = isBuy ? Colors.greenAccent : Colors.redAccent;
+
+                    return Row(
+                      children: [
+                        Icon(
+                          icon,
+                          color: iconColor,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "$type SIGNAL",
+                                style: TextStyle(
+                                  color: iconColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                reason,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          time,
+                          style: const TextStyle(
+                            color: Colors.white30,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
-                itemBuilder: (context, idx) {
-                  final item = checklist[idx];
-                  final String status = item['status'] ?? "Fail";
-                  final bool pass = status == 'Pass';
-                  final bool warn = status == 'Warn';
-                  final String name = item['item'] ?? "";
-                  final String detail = item['detail'] ?? "";
-                  final int points = (item['points'] as num?)?.toInt() ?? 0;
-
-                  final IconData icon = pass
-                      ? Icons.check_circle_outline_rounded
-                      : (warn ? Icons.warning_amber_rounded : Icons.cancel_outlined);
-                  final Color iconColor = pass
-                      ? Colors.greenAccent
-                      : (warn ? Colors.orangeAccent : Colors.redAccent);
-
-                  return Row(
-                    children: [
-                      Icon(
-                        icon,
-                        color: iconColor,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              detail,
-                              style: const TextStyle(
-                                color: Colors.white30,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Text(
-                        "+$points pts",
-                        style: TextStyle(
-                          color: pass
-                              ? Colors.white30
-                              : (warn ? Colors.white24 : Colors.white10),
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 24),
 
         // Execution Row

@@ -132,8 +132,8 @@ class ApiService {
   Future<Map<String, dynamic>?> analyzeStock(String symbol, {double? ltp}) async {
     try {
       final url = ltp != null && ltp > 0
-          ? '$baseUrl/analyze-stock?symbol=$symbol&ltp=$ltp'
-          : '$baseUrl/analyze-stock?symbol=$symbol';
+          ? '$baseUrl/api/scanner/scan?symbol=$symbol&ltp=$ltp'
+          : '$baseUrl/api/scanner/scan?symbol=$symbol';
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         return json.decode(response.body);
