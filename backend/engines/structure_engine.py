@@ -7,9 +7,9 @@ class StructureEngine:
 
     def detect_swings(self, df: pd.DataFrame):
         """Institutional swing detection without look-ahead bias."""
-        # Use previous candles only for real-time safety
+        df = df.copy()  # FIX: prevent mutation of caller's DataFrame
         df['swing_high'] = df['high'].rolling(window=self.lookback).max()
-        df['swing_low'] = df['low'].rolling(window=self.lookback).min()
+        df['swing_low']  = df['low'].rolling(window=self.lookback).min()
         return df
 
     def get_equilibrium(self, df):
@@ -42,31 +42,36 @@ class StructureEngine:
         displacement = body > (avg_body * 1.5)
         
         # Check if previous candle swept a swing
-        swept = df['high'].iloc[index-1] > df['high'].rolling(10).max().iloc[index-2] or \
-                df['low'].iloc[index-1] < df['low'].rolling(10).min().iloc[index-2]
+        # Use index-3 as the rolling base so the sweep candle (index-1) is NOT in the window
+        swept = df['high'].iloc[index-1] > df['high'].rolling(10).max().iloc[index-3] or \
+                df['low'].iloc[index-1] < df['low'].rolling(10).min().iloc[index-3]
                 
         return displacement and swept
 
     def detect_fvg(self, df):
-        """Identify Fair Value Gaps (FVG) in recent price action."""
-        if len(df) < 3: return False
-        
-        # Bullish FVG: High of candle 1 < Low of candle 3
-        # Bearish FVG: Low of candle 1 > High of candle 3
+        """Identify Fair Value Gaps (FVG) in recent price action.
+        Returns a dict with direction-aware flags so callers can match bias."""
+        if len(df) < 3:
+            return {'bullish_fvg': False, 'bearish_fvg': False, 'fvg_gap': False}
+
         c1 = df.iloc[-3]
-        c2 = df.iloc[-2]
+        # c2 = df.iloc[-2]  # middle candle (not used in gap detection)
         c3 = df.iloc[-1]
-        
-        bullish_fvg = c1['high'] < c3['low']
-        bearish_fvg = c1['low'] > c3['high']
-        
-        return bullish_fvg or bearish_fvg
+
+        bullish_fvg = c1['high'] < c3['low']   # gap above c1's high
+        bearish_fvg = c1['low']  > c3['high']  # gap below c1's low
+
+        return {
+            'bullish_fvg': bool(bullish_fvg),
+            'bearish_fvg': bool(bearish_fvg),
+            'fvg_gap':     bool(bullish_fvg or bearish_fvg),
+        }
 
     def analyze(self, df: pd.DataFrame):
         df = self.detect_swings(df)
         eq_data = self.get_equilibrium(df)
         eqh, eql = self.detect_liquidity_pools(df)
-        fvg_gap = self.detect_fvg(df)
+        fvg_result = self.detect_fvg(df)   # now returns a dict
         
         current_price = df['close'].iloc[-1]
         in_discount = current_price < eq_data['eq']
@@ -98,6 +103,8 @@ class StructureEngine:
             'in_premium': in_premium,
             'eqh': eqh,
             'eql': eql,
-            'fvg_gap': fvg_gap,
+            'fvg_gap':     fvg_result['fvg_gap'],      # backward-compat key
+            'bullish_fvg': fvg_result['bullish_fvg'],  # new directional keys
+            'bearish_fvg': fvg_result['bearish_fvg'],
             'dealing_range': eq_data
         }

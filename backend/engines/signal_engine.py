@@ -4,7 +4,7 @@ import datetime
 
 class SignalEngine:
     def __init__(self):
-        self.min_score = 6
+        self.min_score = 8   # Must match the hardcoded threshold in evaluate()
         self._struct_engine = None  # FIX: Lazy init once, not on every signal call
 
     @property
@@ -146,8 +146,9 @@ class SignalEngine:
         vol_avg = mtf_df['volume'].rolling(20).mean().iloc[-1]
         if mtf_df['volume'].iloc[-1] > (vol_avg * 1.5): score += 2
         
-        # FVG/Imbalance Check
-        if structure_data.get('fvg_gap', False): score += 1
+        # FVG/Imbalance Check — only score if FVG direction matches trade bias
+        if bias == "BULLISH" and structure_data.get('bullish_fvg', False): score += 1
+        if bias == "BEARISH" and structure_data.get('bearish_fvg', False): score += 1
         
         # 1. ADX Trend Strength Check
         adx_val = self.calculate_adx(mtf_df)
@@ -169,23 +170,24 @@ class SignalEngine:
         orb_passed = True
         try:
             today_str = datetime.datetime.now(ist_tz).strftime("%Y-%m-%d")
-            # Look for 15M candles starting today
-            today_candles = mtf_df[mtf_df['time'].str.startswith(today_str)] if 'time' in mtf_df.columns else pd.DataFrame()
+            if 'time' in mtf_df.columns:
+                # Normalize time column to string safely (handles both str and datetime types)
+                time_col_str = mtf_df['time'].astype(str)
+                today_candles = mtf_df[time_col_str.str.startswith(today_str)]
+            else:
+                today_candles = pd.DataFrame()
+
             if not today_candles.empty:
                 first_candle = today_candles.iloc[0]
                 orb_high = first_candle['high']
-                orb_low = first_candle['low']
-                
+                orb_low  = first_candle['low']
                 if bias == "BULLISH" and last_close <= orb_high:
                     orb_passed = False
                 elif bias == "BEARISH" and last_close >= orb_low:
                     orb_passed = False
-            else:
-                # If we don't have today's candles, do not fallback to an old candle!
-                # We simply bypass the ORB filter instead of inverting our logic.
-                pass
-        except Exception:
-            pass
+            # else: no today candles found → bypass ORB (don't block trade due to missing data)
+        except Exception as e:
+            print(f"[SignalEngine] ORB filter error: {e}")  # log instead of silent swallow
 
         side = None
         # Ultra-Strict Trigger: 
@@ -220,14 +222,25 @@ class SignalEngine:
 
         structure_data = self.struct_engine.analyze(df_15m)  # FIX: reuse from __init__
 
-        # FIX: PDH/PDL — use actual previous session high/low, not the whole fetched window
-        # df_1h has ~30 candles; iloc[0] is oldest (yesterday+), iloc[-1] is latest (today)
-        # Exclude last candle (today partial) to get previous session range
-        prev_candles = df_1h.iloc[:-1] if len(df_1h) > 1 else df_1h
+        # PDH/PDL: filter df_1h to only yesterday's candles using the 'time' column
+        from datetime import timezone, timedelta, datetime as _dt
+        _ist = timezone(timedelta(hours=5, minutes=30))
+        _today_str = _dt.now(_ist).strftime("%Y-%m-%d")
+
+        if 'time' in df_1h.columns:
+            # Normalize to string in case column is datetime type
+            time_col = df_1h['time'].astype(str)
+            today_candles_1h  = df_1h[time_col.str.startswith(_today_str)]
+            prev_day_candles  = df_1h[~time_col.str.startswith(_today_str)]
+        else:
+            # Fallback: last 8 candles = roughly yesterday's NSE session (9 hourly bars)
+            prev_day_candles  = df_1h.iloc[-9:-1]
+            today_candles_1h  = df_1h.iloc[-1:]
+
         daily_data = {
-            'open': df_1h.iloc[-1]['open'],   # Today's open (last hourly candle open)
-            'pdh': prev_candles['high'].max(), # Previous session high
-            'pdl': prev_candles['low'].min()   # Previous session low
+            'open': today_candles_1h.iloc[0]['open'] if not today_candles_1h.empty else df_1h.iloc[-1]['open'],
+            'pdh':  prev_day_candles['high'].max() if not prev_day_candles.empty else df_1h['high'].iloc[-2],
+            'pdl':  prev_day_candles['low'].min()  if not prev_day_candles.empty else df_1h['low'].iloc[-2],
         }
 
         eval_result = self.evaluate(df_1h, df_15m, structure_data, daily_data, {'is_valid': True}, symbol=symbol)

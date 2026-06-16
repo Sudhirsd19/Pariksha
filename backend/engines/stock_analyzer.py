@@ -118,7 +118,7 @@ class StockAnalyzer:
                 if not real_ltp or real_ltp <= 0:
                     # fallback: fast_info
                     fast_info = await asyncio.to_thread(lambda: ticker_obj.fast_info)
-                    real_ltp = float(fast_info.get("last_price", 0) or 0)
+                    real_ltp = float(getattr(fast_info, 'last_price', 0) or 0)
             except Exception as e:
                 print(f"[StockAnalyzer] yfinance LTP fetch failed for {symbol}: {e}")
                 
@@ -448,18 +448,20 @@ class StockAnalyzer:
         if mock_data_used:
             actionable = False
 
-        # Determine trade side
-        recommendation = "NEUTRAL"
-        if actionable:
-            if htf_trend == "Bullish" and vwap_alignment != "Bearish" and bullish_displacement:
-                recommendation = "BUY"
-            elif htf_trend == "Bearish" and bearish_displacement:
-                recommendation = "SELL"
+        # Determine final actionable status and trade direction
+        vwap_mandatory_pass = vwap_alignment != "Bearish"  # Bullish or Neutral/Unknown both allowed
+        actionable = (
+            (score >= min_score_required)
+            and event_ok
+            and vwap_mandatory_pass
+            and spread_ok
+            and time_ok
+            and not vwap_overextended
+            and sector_aligned
+            and not mock_data_used
+        )
 
-        # Final: actionable only if recommendation is directional (not neutral)
-        actionable = actionable and recommendation in ["BUY", "SELL"]
-        vwap_mandatory_pass = vwap_alignment != "Bearish"  # Either Bullish or Neutral/Unknown
-        actionable = (score >= min_score_required) and event_ok and vwap_mandatory_pass and spread_ok and time_ok and not vwap_overextended and sector_aligned and not mock_data_used
+        recommendation = "NEUTRAL"
         if actionable:
             if htf_trend == "Bullish" and bullish_displacement:
                 recommendation = "BUY"

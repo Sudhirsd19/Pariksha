@@ -42,8 +42,8 @@ class RiskManager:
                 if doc.exists:
                     data = doc.to_dict()
                     self.news_events = data.get("events", [])
-        except Exception:
-            pass  # Use existing list if Firestore is unavailable
+        except Exception as e:
+            print(f"[RiskManager] WARNING suppressed: {e}")
         
         for event_str in self.news_events:
             try:
@@ -105,8 +105,8 @@ class RiskManager:
                     data = doc.to_dict()
                     self.max_directional_exposure = int(data.get("max_directional_exposure", 5))
                     self.max_trades = int(data.get("max_trades_per_day", self.max_trades))
-        except Exception:
-            pass  # Keep existing values if Firebase unavailable
+        except Exception as e:
+            print(f"[RiskManager] WARNING suppressed: {e}")
 
     def can_trade(self, side=None) -> bool:
         # Refresh dynamic limits from Firebase before each trade check
@@ -145,7 +145,10 @@ class RiskManager:
         raw_quantity = int(total_risk / risk_per_share)
         
         # Check if it is an Equity stock (does not end with FUT, CE, PE, and is not NIFTY/BANKNIFTY)
-        is_equity = symbol not in ["NIFTY", "BANKNIFTY"] and not any(suffix in symbol for suffix in ["FUT", "CE", "PE"])
+        # FIX: use suffix check (endswith) not 'in' — prevents "NIFTYBEES" being misclassified
+        _INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"}
+        _FNO_SUFFIXES  = ("FUT", "CE", "PE")
+        is_equity = (symbol not in _INDEX_SYMBOLS) and not symbol.endswith(_FNO_SUFFIXES)
         
         if is_equity:
             # Equities do not trade in lots
