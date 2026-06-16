@@ -706,6 +706,16 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                    iconSize: 26,
+                    onPressed: () {
+                      provider.clearScannedStock();
+                    },
+                  ),
+                  const SizedBox(width: 12),
                   (() {
                     final inWatchlist = provider.watchlist.any((item) => item['symbol'] == symbol);
                     return IconButton(
