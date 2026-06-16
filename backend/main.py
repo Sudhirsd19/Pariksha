@@ -42,7 +42,7 @@ from firebase_admin import messaging
 from backend.safety.health_monitor import health_monitor
 from backend.utils.persistence_manager import persistence_manager
 from backend.engines.correlation_engine import CorrelationEngine
-
+from backend.engines.stock_analyzer import StockAnalyzer
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="QuantumIndex Algo-Trading System")
@@ -1199,6 +1199,17 @@ async def trading_loop():
                     continue
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
+                    # NEW: Fundamental & Technical Validation from Stock Analyzer
+                    analyzer_engine = StockAnalyzer()
+                    analyzer_res = await analyzer_engine.analyze_stock(symbol, broker.smart_api, None)
+                    if analyzer_res.get("status") == "success":
+                        if not analyzer_res.get("actionable", False):
+                            print(f"[StockAnalyzer] Rejecting {side} on {symbol}: Scorecard Failed (Score: {analyzer_res.get('score', 0)})")
+                            continue
+                        # Attach scorecard info to signal data for analytics logging
+                        signal_data["score"] = analyzer_res.get("score")
+                        signal_data["score_breakdown"] = analyzer_res.get("checklist", [])
+
                     # FIX 2: CooldownEngine check — prevents trades within 10 min window
                     if not cooldown_engine.can_trade():
                         remaining = int(cooldown_engine.cooldown_period.total_seconds() / 60)

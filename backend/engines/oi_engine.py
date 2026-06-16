@@ -31,7 +31,8 @@ class OIEngine:
 
         interval = 50 if symbol == "NIFTY" else 100
         atm_strike = int(round(index_ltp / interval) * interval)
-        strikes = [atm_strike + i * interval for i in range(-5, 6)] # 11 strikes around ATM
+        # Reduce load: Only fetch Top 5 strikes (ATM ± 2) instead of 11 strikes
+        strikes = [atm_strike + i * interval for i in range(-2, 3)] # 5 strikes around ATM
         
         tokens_to_fetch = []
         token_metadata = {} # Map token -> (strike, type)
@@ -93,18 +94,8 @@ class OIEngine:
         PCR < 0.8 => Bearish
         """
         if symbol not in self.options_chain or not self.options_chain[symbol]:
-            # Deterministic/stable fallback for paper trading
-            import random
-            import datetime
-            seed_day = datetime.datetime.now().strftime("%Y-%m-%d")
-            # Create a day-based seed
-            day_hash = sum(ord(c) for c in seed_day)
-            random.seed(day_hash)
-            base_pcr = random.uniform(0.75, 1.25)
-            # Stable 5-minute fluctuation
-            minute_seed = int(time.time() / 300)
-            random.seed(day_hash + minute_seed)
-            return round(base_pcr + random.uniform(-0.05, 0.05), 2)
+            # No data available. Do not guess or generate random noise.
+            return None
 
         chain_data = self.options_chain[symbol]
         total_ce_oi = sum([strike.get('ce_oi', 0) for strike in chain_data])
@@ -158,6 +149,10 @@ class OIEngine:
         """
         pcr = self.calculate_pcr(symbol)
         
+        # Fail-Safe: If PCR couldn't be calculated, assume Neutral and don't block the trade.
+        if pcr is None:
+            return True
+            
         if side == "BUY":
             # If we want to go Long, PCR should ideally be > 0.85
             if pcr < 0.8:

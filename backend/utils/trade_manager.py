@@ -91,7 +91,11 @@ class TradeManager:
         else:  # EQUITY intraday & OPTIONS
             stamp = buy_turnover * 0.00003         # 0.003%
 
-        total = brokerage + stt + txn + sebi + gst + stamp
+        # ── 7. SLIPPAGE SIMULATION (Paper Trading Edge) ────────────────
+        # Simulate realistic market execution slippage: 0.05% of traded value
+        slippage = (buy_turnover + sell_turnover) * 0.0005
+
+        total = brokerage + stt + txn + sebi + gst + stamp + slippage
         return round(total, 2)
 
     def load_state(self):
