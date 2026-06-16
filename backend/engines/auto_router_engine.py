@@ -100,11 +100,14 @@ class AutoRouterEngine:
             # Sort descending (newest first)
             formatted_signals.reverse()
 
+        latest_price = float(df['close'].iloc[-1])
+
         return {
             "symbol": symbol,
             "status": "success",
             "adx_score": round(latest_adx, 2),
             "engine_used": engine_name,
+            "ltp": latest_price,
             "total_signals_today": len(formatted_signals),
             "signals": formatted_signals
         }

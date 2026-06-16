@@ -841,6 +841,51 @@ async def scan_stock_signals(symbol: str):
     result = await asyncio.to_thread(auto_router.get_signals_for_symbol, symbol)
     return result
 
+@app.get("/api/scanner/bulk-scan")
+async def bulk_scan_signals(max_price: float = 3000.0):
+    """
+    Runs the Auto-Router Engine across the entire SCREENER_UNIVERSE 
+    and returns only the stocks that have actionable signals today and are below max_price.
+    """
+    import concurrent.futures
+
+    def process_symbol(sym):
+        try:
+            ticker = sym if sym.endswith(".NS") else f"{sym}.NS"
+            result = auto_router.get_signals_for_symbol(ticker)
+            if result.get("status") == "success":
+                # Filter by max_price (if ltp is present)
+                if result.get("ltp", 999999) <= max_price:
+                    # Only return stocks that have actual signals today
+                    if result.get("total_signals_today", 0) > 0:
+                        return result
+        except Exception as e:
+            print(f"[Bulk Scan] Error processing {sym}: {e}")
+        return None
+
+    def process_all():
+        active_trades = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            results = list(executor.map(process_symbol, SCREENER_UNIVERSE))
+            
+        for r in results:
+            if r is not None:
+                active_trades.append(r)
+                
+        # Sort by ADX Score (Strongest trend at the top)
+        active_trades.sort(key=lambda x: x.get("adx_score", 0), reverse=True)
+                
+        return {
+            "status": "success",
+            "total_scanned": len(SCREENER_UNIVERSE),
+            "active_trades_found": len(active_trades),
+            "max_price_applied": max_price,
+            "trades": active_trades
+        }
+
+    result = await asyncio.to_thread(process_all)
+    return result
+
 @app.get("/analyze-stock")
 async def analyze_stock(symbol: str, ltp: float = 0.0):
     symbol = symbol.upper()
