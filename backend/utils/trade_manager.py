@@ -92,8 +92,8 @@ class TradeManager:
             stamp = buy_turnover * 0.00003         # 0.003%
 
         # ── 7. SLIPPAGE SIMULATION (Paper Trading Edge) ────────────────
-        # Simulate realistic market execution slippage: 0.05% of traded value
-        slippage = (buy_turnover + sell_turnover) * 0.0005
+        # User requested exact execution without slippage penalty
+        slippage = 0.0
 
         total = brokerage + stt + txn + sebi + gst + stamp + slippage
         return round(total, 2)
