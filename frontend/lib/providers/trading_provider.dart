@@ -40,12 +40,14 @@ class TradingProvider with ChangeNotifier {
   Map<String, dynamic>? _analyticsData;
   Map<String, dynamic>? _pnlData;
   List<Map<String, dynamic>> _dailyPnlRecords = [];
+  Map<String, dynamic>? _conditionWinRates;
 
   Map<String, dynamic> _systemSettings = {};
 
   Map<String, dynamic>? get analyticsData => _analyticsData;
   Map<String, dynamic>? get pnlData => _pnlData;
   List<Map<String, dynamic>> get dailyPnlRecords => _dailyPnlRecords;
+  Map<String, dynamic>? get conditionWinRates => _conditionWinRates;
   Map<String, dynamic> get systemSettings => _systemSettings;
 
   double get winRate {
@@ -116,6 +118,7 @@ class TradingProvider with ChangeNotifier {
     _initFirestoreListeners();
     _connectWebSocket();
     _startWatchlistRefreshTimer();
+    fetchConditionAnalytics();
     
     // FIX H-7: Removed unconditional 5-second polling timer that was racing with Firestore listener.
     // fetchLogs() is now only called explicitly when needed (e.g. from LogsScreen sync button).
@@ -338,6 +341,14 @@ class TradingProvider with ChangeNotifier {
   Future<void> fetchAnalyticsAndPnl() async {
     // Now handled by Firestore real-time listener (_initFirestoreListeners)
     // Kept empty to avoid breaking existing UI calls during transition
+  }
+
+  Future<void> fetchConditionAnalytics() async {
+    final res = await _apiService.getAnalytics();
+    if (res != null && res.containsKey('condition_win_rates')) {
+      _conditionWinRates = res['condition_win_rates'] as Map<String, dynamic>;
+      notifyListeners();
+    }
   }
 
   Future<void> emergencySquareOff() async {

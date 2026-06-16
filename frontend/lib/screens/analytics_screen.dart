@@ -90,6 +90,10 @@ class AnalyticsScreen extends StatelessWidget {
                         _buildStatCard("AVG LOSER", "₹${avgLoser.toStringAsFixed(0)}", Icons.south_west_rounded, Colors.deepOrangeAccent),
                       ],
                     ),
+                    const SizedBox(height: 30),
+                    const Text('CONDITION WIN-RATES', style: TextStyle(color: Colors.white24, fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 10)),
+                    const SizedBox(height: 16),
+                    _buildConditionWinRates(provider),
                     const SizedBox(height: 100),
                   ]),
                 ),
@@ -236,6 +240,95 @@ class AnalyticsScreen extends StatelessWidget {
           Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5)),
         ],
       ),
+    );
+  }
+
+  Widget _buildConditionWinRates(TradingProvider provider) {
+    final conditions = provider.conditionWinRates;
+    if (conditions == null || conditions.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.02),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: const Center(
+          child: Text(
+            "Insufficient trade data to calculate condition win rates.",
+            style: TextStyle(color: Colors.white30, fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    // Sort by win rate descending
+    final entries = conditions.entries.toList()
+      ..sort((a, b) {
+        final aWr = (a.value['win_rate'] as num).toDouble();
+        final bWr = (b.value['win_rate'] as num).toDouble();
+        return bWr.compareTo(aWr);
+      });
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: entries.length,
+      itemBuilder: (context, index) {
+        final key = entries[index].key;
+        final data = entries[index].value;
+        final winRate = (data['win_rate'] as num).toDouble();
+        final trades = data['trades'] as int;
+
+        Color color;
+        if (winRate >= 60) color = Colors.greenAccent;
+        else if (winRate >= 40) color = Colors.amberAccent;
+        else color = Colors.redAccent;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.02),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: color.withValues(alpha: 0.1)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      key,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    '${winRate.toStringAsFixed(1)}%',
+                    style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: winRate / 100,
+                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                  color: color,
+                  minHeight: 6,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '$trades Trades Total',
+                style: const TextStyle(color: Colors.white30, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

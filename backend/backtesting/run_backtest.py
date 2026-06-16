@@ -51,7 +51,7 @@ def run_historical_backtest(symbol="^NSEI", days=30):
         return
 
     engine = BacktestEngine(initial_capital=100000)
-    signal_engine = SignalEngine(symbol.replace("^NSEI", "NIFTY"))
+    signal_engine = SignalEngine()
 
     print(f"Starting Backtest on {len(df_5m)} 5-minute candles...")
 
