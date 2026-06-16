@@ -280,9 +280,13 @@ class AnalyticsScreen extends StatelessWidget {
         final trades = data['trades'] as int;
 
         Color color;
-        if (winRate >= 60) color = Colors.greenAccent;
-        else if (winRate >= 40) color = Colors.amberAccent;
-        else color = Colors.redAccent;
+        if (winRate >= 60) {
+          color = Colors.greenAccent;
+        } else if (winRate >= 40) {
+          color = Colors.amberAccent;
+        } else {
+          color = Colors.redAccent;
+        }
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
