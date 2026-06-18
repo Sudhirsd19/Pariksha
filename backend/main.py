@@ -32,7 +32,6 @@ from backend.execution.broker_api import AngelOneBroker
 from backend.indicators.technical_indicators import TechnicalIndicators
 from backend.market_stream.socket_manager import MarketWebSocket
 from backend.risk_management.risk_manager import RiskManager
-from backend.engines.signal_engine import SignalEngine  # This has check_killzone method
 from backend.utils.historical_data import fetch_historical_data
 from backend.utils.token_manager import token_manager
 from backend.config.firebase_config import init_firebase
@@ -41,9 +40,6 @@ from backend.utils.trade_manager import trade_manager
 from firebase_admin import messaging
 from backend.safety.health_monitor import health_monitor
 from backend.utils.persistence_manager import persistence_manager
-from backend.engines.correlation_engine import CorrelationEngine
-from backend.engines.stock_analyzer import StockAnalyzer
-from backend.engines.auto_router_engine import AutoRouterEngine
 from backend.engines.strict_checklist_engine import strict_checklist_engine
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -91,11 +87,7 @@ ws_manager = None
 # --- CORE COMPONENTS ---
 broker = AngelOneBroker()
 risk_manager = RiskManager(initial_capital=100000)
-signal_engine = SignalEngine()
-correlation_engine = CorrelationEngine()
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
-stock_analyzer = StockAnalyzer()  # M-4 Fix: Instantiate globally
-auto_router = AutoRouterEngine()  # Dynamic Engine selection based on ADX
 
 @app.on_event("startup")
 async def startup_event():
@@ -863,33 +855,37 @@ async def scan_stock_signals(symbol: str):
         if nifty_token:
             nifty_df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, nifty_token, "FIFTEEN_MINUTE", 5, "NSE")
             
-    result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
+    if df is None or df.empty:
+        try:
+            import yfinance as yf
+            df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
+        except Exception as e:
+            print(f"[Scan Endpoint] yfinance fallback failed for {ticker}: {e}")
+            return {"status": "error", "message": "Failed to fetch data"}
+            
+    is_nifty_bullish = True
+    if nifty_df is not None and not nifty_df.empty:
+        from backend.indicators.technical_indicators import TechnicalIndicators
+        nifty_df = TechnicalIndicators.add_ema(nifty_df, 50)
+        last_nifty = nifty_df.iloc[-1]
+        if last_nifty['close'] < last_nifty['EMA_50']:
+            is_nifty_bullish = False
+            
+    strict_result = await asyncio.to_thread(
+        strict_checklist_engine.evaluate, 
+        ticker, 
+        df.copy(), 
+        is_nifty_bullish=is_nifty_bullish
+    )
     
-    # Process Strict Checklist Logic
-    strict_result = {"strict_signal": "NONE", "strict_score": 0}
-    if df is not None and not df.empty:
-        is_nifty_bullish = True
-        if nifty_df is not None and not nifty_df.empty:
-            from backend.indicators.technical_indicators import TechnicalIndicators
-            nifty_df = TechnicalIndicators.add_ema(nifty_df, 50)
-            last_nifty = nifty_df.iloc[-1]
-            if last_nifty['close'] < last_nifty['EMA_50']:
-                is_nifty_bullish = False
-                
-        strict_result = await asyncio.to_thread(
-            strict_checklist_engine.evaluate, 
-            ticker, 
-            df.copy(), 
-            is_nifty_bullish=is_nifty_bullish
-        )
-        
-    # Merge signals
-    if result.get("status") == "success":
-        result["strict_signal"] = strict_result.get("strict_signal", "NONE")
-        result["strict_score"] = strict_result.get("strict_score", 0)
-        result["strict_breakdown"] = strict_result.get("breakdown", {})
-        
-    return result
+    # Return directly from strict_checklist_engine
+    return {
+        "status": "success",
+        "symbol": base_symbol,
+        "strict_signal": strict_result.get("strict_signal", "NONE"),
+        "strict_score": strict_result.get("strict_score", 0),
+        "breakdown": strict_result.get("breakdown", {})
+    }
 
 @app.get("/api/scanner/bulk-scan")
 async def bulk_scan_signals(max_price: float = 3000.0):
@@ -977,9 +973,6 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 except Exception as e:
                     print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
 
-            result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
-            
-            # Process Strict Checklist Logic
             if df is not None and not df.empty:
                 strict_result = await asyncio.to_thread(
                     strict_checklist_engine.evaluate, 
@@ -987,22 +980,25 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                     df.copy(), 
                     is_nifty_bullish=is_nifty_bullish
                 )
-                if result.get("status") == "success":
-                    result["strict_signal"] = strict_result.get("strict_signal", "NONE")
-                    result["strict_score"] = strict_result.get("strict_score", 0)
-                    result["strict_breakdown"] = strict_result.get("breakdown", {})
-            
-            if result.get("status") == "success":
-                # Filter by max_price
-                if result.get("ltp", 999999) <= max_price:
-                    # Return if ANY signal is present (either old AutoRouter or new Strict)
-                    if result.get("total_signals_today", 0) > 0 or result.get("strict_signal") != "NONE":
-                        active_trades.append(result)
+                
+                # Fetch LTP from the most recent candle
+                ltp = df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1]
+                
+                if ltp <= max_price:
+                    if strict_result.get("strict_signal") != "NONE":
+                        active_trades.append({
+                            "status": "success",
+                            "symbol": base_symbol,
+                            "ltp": ltp,
+                            "strict_signal": strict_result.get("strict_signal", "NONE"),
+                            "strict_score": strict_result.get("strict_score", 0),
+                            "breakdown": strict_result.get("breakdown", {})
+                        })
         except Exception as e:
             print(f"[Bulk Scan] Error processing {sym}: {e}")
 
-    # Sort by ADX Score (Strongest trend at the top)
-    active_trades.sort(key=lambda x: x.get("adx_score", 0), reverse=True)
+    # Sort by Strict Score (Strongest setups at the top)
+    active_trades.sort(key=lambda x: x.get("strict_score", 0), reverse=True)
             
     return {
         "status": "success",
@@ -1143,17 +1139,30 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     df = None
     if broker.session and token:
         from backend.utils.historical_data import fetch_historical_data
-        df = fetch_historical_data(broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+        df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
         
-    res = auto_router.get_signals_for_symbol(ticker, df)
-    if res.get("status") == "error":
-        return res
-        
-    # We do not block manual execution based on strict criteria anymore
-    # because the user is executing this from the new Auto-Router Watchlist UI.
+    if df is None or df.empty:
+        try:
+            import yfinance as yf
+            df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
+        except Exception:
+            return {"status": "error", "message": "Failed to fetch stock data for execution."}
+            
+    strict_result = await asyncio.to_thread(
+        strict_checklist_engine.evaluate, 
+        ticker, 
+        df.copy(), 
+        is_nifty_bullish=True # Assume true for manual execution if not fetched
+    )
     
+    strict_score = strict_result.get("strict_score", 0)
+    
+    # Optional: Block execution if score is completely garbage, but usually we let manual execute
+    if strict_score < 30 and side == "BUY":
+        print(f"[Warning] Manual BUY executed with low strict score: {strict_score}")
+        
     trading_symbol = f"{base_symbol}-EQ"
-    price = ltp if ltp > 0 else res.get("ltp", 0.0)
+    price = ltp if ltp > 0 else (df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1])
     
     if price <= 0:
         return {"status": "error", "message": "Invalid stock price"}
@@ -1174,7 +1183,14 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
             "message": f"Requested quantity ({qty}) exceeds daily capital limit. Max allowed is {max_allowed_qty} shares."
         }
         
-    atr = res.get("atr", 0.0)
+    # Standard ATR estimation since we don't have old auto_router
+    from backend.indicators.technical_indicators import TechnicalIndicators
+    try:
+        df_atr = TechnicalIndicators.add_atr(df.copy(), 14)
+        atr = df_atr['ATR_14'].iloc[-1]
+    except:
+        atr = 0.0
+        
     if atr > 0:
         sl = price - (2.0 * atr) if side == "BUY" else price + (2.0 * atr)
         tp = price + (4.0 * atr) if side == "BUY" else price - (4.0 * atr)
@@ -1189,7 +1205,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         "actual_entry": price,
         "sl": sl,
         "tp": tp,
-        "reason": f"ALGO EQUITY {side} - ADX: {res.get('adx_score', 0)} ({res.get('engine_used', 'Manual')})",
+        "reason": f"ALGO EQUITY {side} - 100-Point Score: {strict_score}",
         "is_paper": is_paper_trading,
         "timestamp": int(time.time() * 1000),
         "token": token,

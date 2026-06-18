@@ -1532,20 +1532,14 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final item = filteredWatchlist[idx];
               final String symbol = item['symbol'] ?? "";
               final double ltp = (item['ltp'] as num?)?.toDouble() ?? 0.0;
-              final double adxScore = (item['adx_score'] as num?)?.toDouble() ?? 0;
-              final String engineUsed = item['engine_used'] ?? '';
-              final List signals = item['signals'] ?? [];
-              final String signalTime = signals.isNotEmpty ? (signals.first['time'] ?? '') : '';
-              final String reason = signals.isNotEmpty ? (signals.first['reason'] ?? '') : '';
+              final int strictScore = item['strict_score'] ?? 0;
+              final String strictSignal = item['strict_signal'] ?? 'NONE';
               
               String rec = 'WAIT';
-              final String strictSignal = item['strict_signal'] ?? 'NONE';
               if (strictSignal.contains('BUY')) {
                 rec = 'BUY';
               } else if (strictSignal.contains('SELL')) {
                 rec = 'SELL';
-              } else {
-                rec = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
               }
 
               // Find if this stock has an active trade open
@@ -1565,8 +1559,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final bool hasActive = activeTrade != null;
               final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
-              final Color scoreColor = adxScore >= 30 ? Colors.greenAccent
-                  : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
+              final Color scoreColor = strictScore >= 80 ? Colors.greenAccent
+                  : strictScore >= 65 ? Colors.cyanAccent : Colors.white24;
 
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -1659,22 +1653,13 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                "₹${ltp.toStringAsFixed(2)} | ADX: ${adxScore.toStringAsFixed(1)} | $engineUsed",
+                                "₹${ltp.toStringAsFixed(2)}",
                                 style: const TextStyle(
                                   color: Colors.white60,
                                   fontSize: 10,
                                 ),
                               ),
-                              if (reason.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    "Time: $signalTime | $reason",
-                                    style: const TextStyle(color: Colors.white38, fontSize: 9),
-                                  ),
-                                ),
                             ],
-                          ),
                       ],
                     ),
                   ),
