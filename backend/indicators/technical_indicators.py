@@ -94,13 +94,24 @@ class TechnicalIndicators:
         
         return df
 
+    @staticmethod
+    def add_macd(df: pd.DataFrame, fast=12, slow=26, signal=9) -> pd.DataFrame:
+        exp1 = df['close'].ewm(span=fast, adjust=False).mean()
+        exp2 = df['close'].ewm(span=slow, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['MACD_Signal'] = df['MACD'].ewm(span=signal, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        return df
+
     @classmethod
     def apply_all(cls, df: pd.DataFrame) -> pd.DataFrame:
+        df = cls.add_ema(df, 9)
         df = cls.add_ema(df, 20)
         df = cls.add_ema(df, 50)
         df = cls.add_rsi(df)
         df = cls.add_atr(df)
         df = cls.add_vwap(df)
         df = cls.add_adx(df)
+        df = cls.add_macd(df)
         df = cls.add_supertrend(df)
         return df

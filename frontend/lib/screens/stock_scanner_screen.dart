@@ -1478,6 +1478,21 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                       ),
                                     ),
                                   ],
+                                  if (item['strict_signal'] != null && item['strict_signal'] != 'NONE') ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.deepOrangeAccent.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.orangeAccent),
+                                      ),
+                                      child: Text(
+                                        "🔥 ${item['strict_score']}% WHALE ${item['strict_signal']} 🟠",
+                                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.w900),
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                               const SizedBox(height: 2),
@@ -1930,6 +1945,21 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                           style: TextStyle(color: tileColor, fontSize: 9, fontWeight: FontWeight.w900),
                                         ),
                                       ),
+                                      if (stock['strict_signal'] != null && stock['strict_signal'] != 'NONE') ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.deepOrangeAccent.withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: Colors.orangeAccent),
+                                          ),
+                                          child: Text(
+                                            "🔥 ${stock['strict_score']}% WHALE ${stock['strict_signal']} 🟠",
+                                            style: const TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.w900),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                   Text(

@@ -44,6 +44,7 @@ from backend.utils.persistence_manager import persistence_manager
 from backend.engines.correlation_engine import CorrelationEngine
 from backend.engines.stock_analyzer import StockAnalyzer
 from backend.engines.auto_router_engine import AutoRouterEngine
+from backend.engines.strict_checklist_engine import strict_checklist_engine
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="QuantumIndex Algo-Trading System")
@@ -843,13 +844,47 @@ async def scan_stock_signals(symbol: str):
     
     # Try fetching data via AngelOne API first to bypass yfinance IP blocks
     df = None
+    nifty_df = None
     if broker.session:
         token = token_manager.get_token(base_symbol)
         exchange = token_manager.get_exchange(base_symbol)
         if token:
             df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
             
+        # Fetch Nifty data for Strict Checklist Macro Filter
+        nifty_token = token_manager.get_token("NIFTY")
+        if nifty_token:
+            nifty_df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, nifty_token, "FIFTEEN_MINUTE", 5, "NSE")
+            
     result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
+    
+    # Process Strict Checklist Logic
+    strict_result = {"strict_signal": "NONE", "strict_score": 0}
+    if df is not None and not df.empty:
+        is_nifty_bullish = True
+        if nifty_df is not None and not nifty_df.empty:
+            from backend.indicators.technical_indicators import TechnicalIndicators
+            nifty_df = TechnicalIndicators.add_ema(nifty_df, 50)
+            last_nifty = nifty_df.iloc[-1]
+            if last_nifty['close'] < last_nifty['EMA_50']:
+                is_nifty_bullish = False
+                
+        strict_result = await asyncio.to_thread(
+            strict_checklist_engine.evaluate, 
+            ticker, 
+            df.copy(), 
+            is_nifty_bullish=is_nifty_bullish,
+            is_sector_green=True, # Stubbed until sector mapping is ready
+            market_depth_buyer_ratio=1.6, # Stubbed until level 2 data is integrated
+            promoter_holding=55.0, # Stubbed until fundamentals API
+            debt_to_equity=0.5
+        )
+        
+    # Merge signals
+    if result.get("status") == "success":
+        result["strict_signal"] = strict_result.get("strict_signal", "NONE")
+        result["strict_score"] = strict_result.get("strict_score", 0)
+        
     return result
 
 @app.get("/api/scanner/bulk-scan")
@@ -868,6 +903,23 @@ async def bulk_scan_signals(max_price: float = 3000.0):
         except Exception as e:
             print(f"[Bulk Scan] Broker login failed: {e}")
 
+    # Fetch Nifty data ONCE for the entire bulk scan (Macro Filter)
+    nifty_df = None
+    is_nifty_bullish = True
+    if broker.session:
+        nifty_token = token_manager.get_token("NIFTY")
+        if nifty_token:
+            try:
+                nifty_df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, nifty_token, "FIFTEEN_MINUTE", 5, "NSE")
+                if nifty_df is not None and not nifty_df.empty:
+                    from backend.indicators.technical_indicators import TechnicalIndicators
+                    nifty_df = TechnicalIndicators.add_ema(nifty_df, 50)
+                    last_nifty = nifty_df.iloc[-1]
+                    if last_nifty['close'] < last_nifty['EMA_50']:
+                        is_nifty_bullish = False
+            except Exception as e:
+                print(f"[Bulk Scan] Failed to fetch Nifty: {e}")
+
     for sym in SCREENER_UNIVERSE:
         try:
             base_symbol = sym.replace(".NS", "")
@@ -883,11 +935,27 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                     
             result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
             
+            # Process Strict Checklist Logic
+            if df is not None and not df.empty:
+                strict_result = await asyncio.to_thread(
+                    strict_checklist_engine.evaluate, 
+                    ticker, 
+                    df.copy(), 
+                    is_nifty_bullish=is_nifty_bullish,
+                    is_sector_green=True,
+                    market_depth_buyer_ratio=1.6,
+                    promoter_holding=55.0,
+                    debt_to_equity=0.5
+                )
+                if result.get("status") == "success":
+                    result["strict_signal"] = strict_result.get("strict_signal", "NONE")
+                    result["strict_score"] = strict_result.get("strict_score", 0)
+            
             if result.get("status") == "success":
                 # Filter by max_price
                 if result.get("ltp", 999999) <= max_price:
-                    # Only return stocks that have actual signals today
-                    if result.get("total_signals_today", 0) > 0:
+                    # Return if ANY signal is present (either old AutoRouter or new Strict)
+                    if result.get("total_signals_today", 0) > 0 or result.get("strict_signal") != "NONE":
                         active_trades.append(result)
         except Exception as e:
             print(f"[Bulk Scan] Error processing {sym}: {e}")
