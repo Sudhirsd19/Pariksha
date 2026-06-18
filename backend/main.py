@@ -370,7 +370,7 @@ async def ltp_broadcaster():
                     "connected": True,
                     "sentiment": ws_sentiment,
                     "sentiment_score": ws_sentiment_score,
-                    "in_killzone": signal_engine.check_killzone(now_time),
+                    "in_killzone": False,
                     "is_active": trading_active,
                     "trades_today": risk_manager.trades_today,
                     "daily_loss": risk_manager.daily_loss,
@@ -432,7 +432,7 @@ async def get_status():
 
     can_trade, lock_reason = risk_manager.check_hard_locks() if hasattr(risk_manager, 'check_hard_locks') else (True, None)
     now = config.get_ist_time().time()
-    in_killzone = signal_engine.check_killzone(now) if hasattr(signal_engine, 'check_killzone') else True
+    in_killzone = False
 
     return {
         "is_active": trading_active,
@@ -1458,38 +1458,13 @@ async def trading_loop():
                 except Exception as e:
                     print(f"[Loop] Failed to fetch LTP for {symbol}: {e}")
 
-                signal_data = signal_engine.generate_signal(df_1m, df_5m, df_15m, df_1h, symbol=symbol, ltp=real_ltp)
-                side = signal_data['signal']
+                signal_data = strict_checklist_engine.evaluate(symbol, df_5m, is_nifty_bullish=True)
+                side = signal_data['strict_signal']
+                if side not in ["BUY", "SELL"]:
+                    side = "NONE"
 
                 # --- CORRELATION GUARD (Nifty vs BankNifty) ---
-                if symbol == "NIFTY":
-                    bn_token = token_manager.get_token("BANKNIFTY")
-                    bn_exchange = token_manager.get_exchange("BANKNIFTY")
-                    df_bn_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, bn_token, "FIVE_MINUTE", 5, bn_exchange)
-                    await asyncio.sleep(0.4)
-                    if df_bn_5m is not None and not df_bn_5m.empty:
-                        if not correlation_engine.check_index_alignment(df_5m, df_bn_5m):
-                            print(f"[CorrelationGuard] NIFTY/BANKNIFTY divergence detected. Skipping {symbol}.")
-                            continue
-                            
-                    # Heavyweight Check: Reliance
-                    rel_token = token_manager.get_token("RELIANCE")
-                    rel_exchange = token_manager.get_exchange("RELIANCE")
-                    if rel_token:
-                        df_rel_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, rel_token, "FIVE_MINUTE", 5, rel_exchange)
-                        await asyncio.sleep(0.4)
-                        if not correlation_engine.check_heavyweight_alignment(symbol, df_5m, df_rel_5m):
-                            continue
-
-                elif symbol == "BANKNIFTY":
-                    # Heavyweight Check: HDFC Bank
-                    hdfc_token = token_manager.get_token("HDFCBANK")
-                    hdfc_exchange = token_manager.get_exchange("HDFCBANK")
-                    if hdfc_token:
-                        df_hdfc_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, hdfc_token, "FIVE_MINUTE", 5, hdfc_exchange)
-                        await asyncio.sleep(0.4)
-                        if not correlation_engine.check_heavyweight_alignment(symbol, df_5m, df_hdfc_5m):
-                            continue
+                # (Replaced by strict_checklist_engine internal checks)
 
                 # --- RISK & NEWS HARD LOCKS ---
                 can_trade, reason = risk_manager.check_hard_locks(settings) if hasattr(risk_manager, 'check_hard_locks') else (True, "OK")
@@ -1499,7 +1474,7 @@ async def trading_loop():
                 
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
                     # Old stock_analyzer scorecard validation has been deprecated and removed.
-                    # The signal_engine and correlation_engine now hold full authority for Index trades.
+                    # The strict_checklist_engine now holds full authority.
 
                     # FIX 2: CooldownEngine check — prevents trades within 10 min window
                     if not cooldown_engine.can_trade():
