@@ -924,7 +924,40 @@ async def bulk_scan_signals(max_price: float = 3000.0):
             except Exception as e:
                 print(f"[Bulk Scan] Failed to fetch Nifty: {e}")
 
-    for sym in SCREENER_UNIVERSE:
+    # 1. Pre-filter by price using yfinance to save time and API limits
+    affordable_symbols = list(SCREENER_UNIVERSE)
+    try:
+        import yfinance as yf
+        tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
+        raw = await asyncio.to_thread(
+            lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=False)
+        )
+        if not raw.empty:
+            close_row = None
+            if isinstance(raw.columns, pd.MultiIndex) and 'Close' in raw.columns.levels[0]:
+                close_row = raw['Close'].iloc[-1]
+            elif "Close" in raw.columns:
+                if len(tickers) == 1:
+                    close_row = pd.Series({tickers[0]: raw["Close"].iloc[-1]})
+                else:
+                    close_row = raw["Close"].iloc[-1]
+            
+            if close_row is not None and not close_row.empty:
+                affordable_symbols = []
+                for sym in SCREENER_UNIVERSE:
+                    try:
+                        val = close_row.get(f"{sym}.NS")
+                        if val is not None and str(val) != 'nan' and float(val) <= max_price:
+                            affordable_symbols.append(sym)
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"[Bulk Scan] Fast price filter failed: {e}")
+        
+    # Cap to max 30 stocks to prevent timeouts
+    scan_list = affordable_symbols[:30]
+
+    for sym in scan_list:
         try:
             base_symbol = sym.replace(".NS", "")
             ticker = f"{base_symbol}.NS"
@@ -965,7 +998,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
             
     return {
         "status": "success",
-        "scanned": len(SCREENER_UNIVERSE),
+        "scanned": len(scan_list),
         "active_trades_found": len(active_trades),
         "max_price_applied": max_price,
         "results": active_trades
