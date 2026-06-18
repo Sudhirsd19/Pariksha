@@ -595,6 +595,8 @@ class TradingProvider with ChangeNotifier {
         "adx_score": stockData['adx_score'] ?? 0.0,
         "engine_used": stockData['engine_used'] ?? '',
         "signals": stockData['signals'] ?? [],
+        "strict_score": stockData['strict_score'] ?? 0,
+        "strict_signal": stockData['strict_signal'] ?? "NONE",
         "timestamp": DateTime.now().millisecondsSinceEpoch,
       });
 
