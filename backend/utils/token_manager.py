@@ -27,17 +27,23 @@ class TokenManager:
 
     def get_token(self, symbol):
         entry = self.tokens.get(symbol)
+        if not entry and symbol in self.stocks_index:
+            entry = self.stocks_index[symbol]
         if isinstance(entry, dict):
             return entry['token']
-        return entry # If it's a flat string from fetch_tokens.py
+        return entry
 
     def get_exchange(self, symbol):
+        if symbol in self.stocks_index:
+            return 'NSE'
         entry = self.tokens.get(symbol)
         if isinstance(entry, dict):
             return entry.get('exchange', 'NFO')
         return 'NFO'
 
     def get_symbol(self, symbol):
+        if symbol in self.stocks_index:
+            return self.stocks_index[symbol]['symbol']
         entry = self.tokens.get(symbol)
         if isinstance(entry, dict):
             return entry.get('symbol', symbol)
