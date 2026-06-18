@@ -1226,7 +1226,6 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         )
     else:
         # Fallback for direct function calls
-        import asyncio
         asyncio.create_task(asyncio.to_thread(
             background_save_and_notify,
             signal_data, side, symbol, qty, trading_symbol, price
