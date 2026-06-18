@@ -1128,13 +1128,13 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
     
     # Pre-fetch AngelOne data to avoid yfinance server blocks on Render
-    from backend.instrument_manager import instrument_manager
-    inst = instrument_manager.get_instrument_by_symbol(f"{symbol}-EQ")
-    token = inst.get("token") if inst else "0"
-    exchange = "NSE"
+    from backend.utils.token_manager import token_manager
+    base_symbol = symbol.replace(".NS", "").replace("-EQ", "")
+    token = token_manager.get_token(base_symbol)
+    exchange = token_manager.get_exchange(base_symbol) or "NSE"
     
     df = None
-    if broker.session and token != "0":
+    if broker.session and token:
         from backend.utils.historical_data import fetch_historical_data
         df = fetch_historical_data(broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
         
@@ -1145,7 +1145,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     # We do not block manual execution based on strict criteria anymore
     # because the user is executing this from the new Auto-Router Watchlist UI.
     
-    trading_symbol = inst.get("symbol") if inst else f"{symbol}-EQ"
+    trading_symbol = f"{base_symbol}-EQ"
     price = ltp if ltp > 0 else res.get("ltp", 0.0)
     
     if price <= 0:
@@ -1214,15 +1214,23 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     if ws_manager:
         ws_manager.subscribe_token(token, 1) # 1 = NSE Equity Cash
     
-    background_tasks.add_task(
-        background_save_and_notify,
-        signal_data,
-        side,
-        symbol,
-        qty,
-        trading_symbol,
-        price
-    )
+    if background_tasks:
+        background_tasks.add_task(
+            background_save_and_notify,
+            signal_data,
+            side,
+            symbol,
+            qty,
+            trading_symbol,
+            price
+        )
+    else:
+        # Fallback for direct function calls
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(
+            background_save_and_notify,
+            signal_data, side, symbol, qty, trading_symbol, price
+        ))
     
     return {
         "status": "success",
