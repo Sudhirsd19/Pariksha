@@ -845,6 +845,13 @@ async def scan_stock_signals(symbol: str):
     # Try fetching data via AngelOne API first to bypass yfinance IP blocks
     df = None
     nifty_df = None
+    
+    if not broker.session:
+        try:
+            broker.login()
+        except Exception as e:
+            print(f"[Scan Endpoint] Broker login failed: {e}")
+            
     if broker.session:
         token = token_manager.get_token(base_symbol)
         exchange = token_manager.get_exchange(base_symbol)
