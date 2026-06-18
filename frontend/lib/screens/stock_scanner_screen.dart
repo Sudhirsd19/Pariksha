@@ -635,7 +635,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                           child: Text(
                             (data['strict_score'] == 100)
                                 ? "🔥 100% WHALE ${data['strict_signal']} 🟠"
-                                : "Whale Score: ${data['strict_score'] ?? '0'}%",
+                                : "Score: ${data['strict_score'] ?? '0'}",
                             style: TextStyle(
                               color: (data['strict_score'] == 100)
                                   ? Colors.orangeAccent
@@ -894,12 +894,19 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     final value = (data['strict_breakdown'] as Map)[key];
                     // Define max points per category
                     int maxPts = 0;
-                    if (key == "Macro Trend") maxPts = 15;
-                    else if (key == "Fundamentals") maxPts = 10;
-                    else if (key == "Price Action") maxPts = 25;
-                    else if (key == "Volume") maxPts = 20;
-                    else if (key == "Momentum") maxPts = 15;
-                    else if (key == "Risk & Execution") maxPts = 15;
+                    if (key == "Macro Trend") {
+                      maxPts = 15;
+                    } else if (key == "Fundamentals") {
+                      maxPts = 10;
+                    } else if (key == "Price Action") {
+                      maxPts = 25;
+                    } else if (key == "Volume") {
+                      maxPts = 20;
+                    } else if (key == "Momentum") {
+                      maxPts = 15;
+                    } else if (key == "Risk & Execution") {
+                      maxPts = 15;
+                    }
 
                     final double pct = maxPts > 0 ? ((value as num).toDouble() / maxPts) : 0;
                     final Color barColor = pct == 1.0 ? Colors.greenAccent : (pct > 0 ? Colors.orangeAccent : Colors.white24);
@@ -1629,7 +1636,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                     child: Text(
                                       (item['strict_score'] == 100)
                                           ? "🔥 100% WHALE ${item['strict_signal']} 🟠"
-                                          : "Whale Score: ${item['strict_score'] ?? '0'}%",
+                                          : "Score: ${item['strict_score'] ?? '0'}",
                                       style: TextStyle(
                                         color: (item['strict_score'] == 100)
                                             ? Colors.orangeAccent
@@ -2108,7 +2115,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                         child: Text(
                                           (stock['strict_score'] == 100)
                                               ? "🔥 100% WHALE ${stock['strict_signal']} 🟠"
-                                              : "Whale Score: ${stock['strict_score'] ?? '0'}%",
+                                              : "Score: ${stock['strict_score'] ?? '0'}",
                                           style: TextStyle(
                                             color: (stock['strict_score'] == 100)
                                                 ? Colors.orangeAccent
