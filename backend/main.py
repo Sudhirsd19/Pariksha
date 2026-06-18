@@ -1469,8 +1469,12 @@ async def trading_loop():
                     print(f"[Loop] Failed to fetch LTP for {symbol}: {e}")
 
                 signal_data = strict_checklist_engine.evaluate(symbol, df_5m, is_nifty_bullish=True)
-                side = signal_data['strict_signal']
-                if side not in ["BUY", "SELL"]:
+                raw_side = signal_data.get('strict_signal', 'NONE')
+                if "BUY" in raw_side:
+                    side = "BUY"
+                elif "SELL" in raw_side:
+                    side = "SELL"
+                else:
                     side = "NONE"
 
                 # --- CORRELATION GUARD (Nifty vs BankNifty) ---
