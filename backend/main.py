@@ -1124,7 +1124,8 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
             reason = f"Directional exposure limit hit for {side} trades"
         return {"status": "error", "message": f"Execution Blocked by Risk Manager: {reason}"}
 
-    res = auto_router.get_signals_for_symbol(symbol)
+    ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+    res = auto_router.get_signals_for_symbol(ticker)
     if res.get("status") == "error":
         return res
         
