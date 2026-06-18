@@ -1501,8 +1501,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: 0.3)),
                   ),
-                  child: Row(
-                    children: const [
+                  child: const Row(
+                    children: [
                       Icon(Icons.refresh_rounded, color: Colors.deepPurpleAccent, size: 14),
                       SizedBox(width: 4),
                       Text(
