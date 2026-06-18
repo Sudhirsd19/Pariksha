@@ -35,7 +35,11 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     _searchController.addListener(_onSearchChanged);
     _searchFocusNode.addListener(() {
       if (!_searchFocusNode.hasFocus) {
-        _removeDropdown();
+        // Add a small delay so that if the user tapped on a dropdown item,
+        // the onTap event has time to fire before the overlay is removed.
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (mounted) _removeDropdown();
+        });
       }
     });
   }
