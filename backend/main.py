@@ -983,6 +983,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 if result.get("status") == "success":
                     result["strict_signal"] = strict_result.get("strict_signal", "NONE")
                     result["strict_score"] = strict_result.get("strict_score", 0)
+                    result["strict_breakdown"] = strict_result.get("breakdown", {})
             
             if result.get("status") == "success":
                 # Filter by max_price
@@ -1125,17 +1126,25 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         return {"status": "error", "message": f"Execution Blocked by Risk Manager: {reason}"}
 
     ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
-    res = auto_router.get_signals_for_symbol(ticker)
+    
+    # Pre-fetch AngelOne data to avoid yfinance server blocks on Render
+    from backend.instrument_manager import instrument_manager
+    inst = instrument_manager.get_instrument_by_symbol(f"{symbol}-EQ")
+    token = inst.get("token") if inst else "0"
+    exchange = "NSE"
+    
+    df = None
+    if broker.session and token != "0":
+        from backend.utils.historical_data import fetch_historical_data
+        df = fetch_historical_data(broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+        
+    res = auto_router.get_signals_for_symbol(ticker, df)
     if res.get("status") == "error":
         return res
         
     # We do not block manual execution based on strict criteria anymore
     # because the user is executing this from the new Auto-Router Watchlist UI.
     
-    from backend.instrument_manager import instrument_manager
-    inst = instrument_manager.get_instrument_by_symbol(f"{symbol}-EQ")
-    
-    token = inst.get("token") if inst else "0"
     trading_symbol = inst.get("symbol") if inst else f"{symbol}-EQ"
     price = ltp if ltp > 0 else res.get("ltp", 0.0)
     
