@@ -856,6 +856,9 @@ async def scan_stock_signals(symbol: str):
         ticker = symbol
         base_symbol = symbol.replace(".NS", "")
     
+    token = token_manager.get_token(base_symbol)
+    exchange = token_manager.get_exchange(base_symbol)
+    
     # Try fetching data via AngelOne API first to bypass yfinance IP blocks
     df = None
     nifty_df = None
@@ -867,8 +870,6 @@ async def scan_stock_signals(symbol: str):
             print(f"[Scan Endpoint] Broker login failed: {e}")
             
     if broker.session:
-        token = token_manager.get_token(base_symbol)
-        exchange = token_manager.get_exchange(base_symbol)
         if token:
             df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
             
@@ -901,11 +902,25 @@ async def scan_stock_signals(symbol: str):
                 current_price = float(df.iloc[-1][col])
                 break
 
+    # Fetch live market depth for buyer/seller ratio
+    market_depth_buyer_ratio = 1.0
+    if broker.session and token:
+        try:
+            depth = await asyncio.to_thread(broker.get_market_depth, exchange, base_symbol, token)
+            if depth:
+                tot_buy = depth.get("totBuyQuan", 0)
+                tot_sell = depth.get("totSellQuan", 0)
+                if tot_sell > 0:
+                    market_depth_buyer_ratio = tot_buy / tot_sell
+        except Exception as e:
+            print(f"[Scan Endpoint] Failed to fetch market depth for {base_symbol}: {e}")
+
     strict_result = await asyncio.to_thread(
         strict_checklist_engine.evaluate, 
         ticker, 
         df.copy(), 
-        is_nifty_bullish=is_nifty_bullish
+        is_nifty_bullish=is_nifty_bullish,
+        market_depth_buyer_ratio=market_depth_buyer_ratio
     )
     
     # Update global score so it gets broadcast via WebSocket + written to Firestore
@@ -989,12 +1004,37 @@ async def bulk_scan_signals(max_price: float = 3000.0):
     # Cap to max 30 stocks to prevent timeouts
     scan_list = affordable_symbols[:30]
 
+    # Fetch batch market depth for all selected stocks to avoid rate limit issues
+    market_depths = {}
+    if broker.session and scan_list:
+        try:
+            tokens_to_fetch = []
+            for s in scan_list:
+                t = token_manager.get_token(s.replace(".NS", ""))
+                if t:
+                    tokens_to_fetch.append(str(t))
+            if tokens_to_fetch:
+                exchangeTokens = {"NSE": tokens_to_fetch}
+                res = await asyncio.to_thread(broker.smart_api.getMarketData, "FULL", exchangeTokens)
+                if res and res.get('status') and res.get('data'):
+                    data_list = res.get('data', {}).get('fetched', [])
+                    for item in data_list:
+                        tok_str = str(item.get('symbolToken'))
+                        market_depths[tok_str] = {
+                            "totBuyQuan": item.get("totBuyQuan", 0),
+                            "totSellQuan": item.get("totSellQuan", 0)
+                        }
+        except Exception as e:
+            print(f"[Bulk Scan] Failed to fetch batch market depth: {e}")
+
     for sym in scan_list:
         try:
             base_symbol = sym.replace(".NS", "")
             ticker = f"{base_symbol}.NS"
             
             df = None
+            token = None
+            exchange = "NSE"
             if broker.session:
                 token = token_manager.get_token(base_symbol)
                 exchange = token_manager.get_exchange(base_symbol)
@@ -1010,11 +1050,20 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                     print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
 
             if df is not None and not df.empty:
+                market_depth_buyer_ratio = 1.0
+                if token and str(token) in market_depths:
+                    depth_info = market_depths[str(token)]
+                    tot_buy = depth_info.get("totBuyQuan", 0)
+                    tot_sell = depth_info.get("totSellQuan", 0)
+                    if tot_sell > 0:
+                        market_depth_buyer_ratio = tot_buy / tot_sell
+
                 strict_result = await asyncio.to_thread(
                     strict_checklist_engine.evaluate, 
                     ticker, 
                     df.copy(), 
-                    is_nifty_bullish=is_nifty_bullish
+                    is_nifty_bullish=is_nifty_bullish,
+                    market_depth_buyer_ratio=market_depth_buyer_ratio
                 )
                 
                 # Fetch LTP from the most recent candle
@@ -1184,11 +1233,25 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         except Exception:
             return {"status": "error", "message": "Failed to fetch stock data for execution."}
             
+    # Fetch live market depth for buyer/seller ratio
+    market_depth_buyer_ratio = 1.0
+    if broker.session and token:
+        try:
+            depth = await asyncio.to_thread(broker.get_market_depth, exchange, base_symbol, token)
+            if depth:
+                tot_buy = depth.get("totBuyQuan", 0)
+                tot_sell = depth.get("totSellQuan", 0)
+                if tot_sell > 0:
+                    market_depth_buyer_ratio = tot_buy / tot_sell
+        except Exception as e:
+            print(f"[Execute Stock Trade] Failed to fetch market depth for {base_symbol}: {e}")
+
     strict_result = await asyncio.to_thread(
         strict_checklist_engine.evaluate, 
         ticker, 
         df.copy(), 
-        is_nifty_bullish=True # Assume true for manual execution if not fetched
+        is_nifty_bullish=True, # Assume true for manual execution if not fetched
+        market_depth_buyer_ratio=market_depth_buyer_ratio
     )
     
     strict_score = strict_result.get("strict_score", 0)
@@ -1517,7 +1580,25 @@ async def trading_loop():
                 except Exception as e:
                     print(f"[Loop] Failed to fetch LTP for {symbol}: {e}")
 
-                signal_data = strict_checklist_engine.evaluate(symbol, df_5m, is_nifty_bullish=True)
+                # Fetch live market depth for buyer/seller ratio
+                market_depth_buyer_ratio = 1.0
+                if broker.session and token:
+                    try:
+                        depth = await asyncio.to_thread(broker.get_market_depth, exchange, symbol, token)
+                        if depth:
+                            tot_buy = depth.get("totBuyQuan", 0)
+                            tot_sell = depth.get("totSellQuan", 0)
+                            if tot_sell > 0:
+                                market_depth_buyer_ratio = tot_buy / tot_sell
+                    except Exception as e:
+                        print(f"[Loop] Failed to fetch market depth for {symbol}: {e}")
+
+                signal_data = strict_checklist_engine.evaluate(
+                    symbol, 
+                    df_5m, 
+                    is_nifty_bullish=True,
+                    market_depth_buyer_ratio=market_depth_buyer_ratio
+                )
                 raw_side = signal_data.get('strict_signal', 'NONE')
                 if "BUY" in raw_side:
                     side = "BUY"
