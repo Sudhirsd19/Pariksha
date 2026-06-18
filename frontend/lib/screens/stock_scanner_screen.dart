@@ -1660,9 +1660,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                 ),
                               ),
                             ],
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
                   const Spacer(),
                   if (hasActive)
                     Container(
