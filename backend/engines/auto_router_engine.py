@@ -45,12 +45,20 @@ class AutoRouterEngine:
             print(f"Error fetching data for {symbol}: {e}")
             return pd.DataFrame()
 
-    def get_signals_for_symbol(self, symbol: str) -> dict:
+    def get_signals_for_symbol(self, symbol: str, df: pd.DataFrame = None) -> dict:
         """
         Main entry point for API.
-        Fetches data, calculates ADX, routes to the right engine, and returns signals.
+        If df is provided, uses it directly. Otherwise fetches via yfinance (fallback).
         """
-        df = self._fetch_data(symbol)
+        if df is None or df.empty:
+            df = self._fetch_data(symbol)
+        else:
+            # Normalize df from Angel One
+            if 'time' in df.columns and 'date' not in df.columns:
+                df.rename(columns={'time': 'date'}, inplace=True)
+            # Ensure date column is datetime object
+            if df['date'].dtype == 'O' or df['date'].dtype == 'str':
+                df['date'] = pd.to_datetime(df['date'])
         
         if df.empty or len(df) < 50:
             return {

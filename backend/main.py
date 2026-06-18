@@ -835,10 +835,21 @@ async def scan_stock_signals(symbol: str):
     """
     symbol = symbol.upper()
     if not symbol.endswith(".NS"):
-        symbol += ".NS"
+        ticker = symbol + ".NS"
+        base_symbol = symbol
+    else:
+        ticker = symbol
+        base_symbol = symbol.replace(".NS", "")
     
-    # Run data fetch and signal generation in a background thread to prevent blocking the async loop
-    result = await asyncio.to_thread(auto_router.get_signals_for_symbol, symbol)
+    # Try fetching data via AngelOne API first to bypass yfinance IP blocks
+    df = None
+    if broker.session:
+        token = token_manager.get_token(base_symbol)
+        exchange = token_manager.get_exchange(base_symbol)
+        if token:
+            df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+            
+    result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
     return result
 
 @app.get("/api/scanner/bulk-scan")
@@ -846,45 +857,51 @@ async def bulk_scan_signals(max_price: float = 3000.0):
     """
     Runs the Auto-Router Engine across the entire SCREENER_UNIVERSE 
     and returns only the stocks that have actionable signals today and are below max_price.
+    Uses AngelOne API sequentially to prevent yfinance IP blocks.
     """
-    import concurrent.futures
-
-    def process_symbol(sym):
+    active_trades = []
+    
+    # Ensure broker is logged in
+    if not broker.session:
         try:
-            ticker = sym if sym.endswith(".NS") else f"{sym}.NS"
-            result = auto_router.get_signals_for_symbol(ticker)
+            broker.login()
+        except Exception as e:
+            print(f"[Bulk Scan] Broker login failed: {e}")
+
+    for sym in SCREENER_UNIVERSE:
+        try:
+            base_symbol = sym.replace(".NS", "")
+            ticker = f"{base_symbol}.NS"
+            
+            df = None
+            if broker.session:
+                token = token_manager.get_token(base_symbol)
+                exchange = token_manager.get_exchange(base_symbol)
+                if token:
+                    df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+                    await asyncio.sleep(0.4)  # Respect AngelOne 3 req/sec rate limit
+                    
+            result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
+            
             if result.get("status") == "success":
-                # Filter by max_price (if ltp is present)
+                # Filter by max_price
                 if result.get("ltp", 999999) <= max_price:
                     # Only return stocks that have actual signals today
                     if result.get("total_signals_today", 0) > 0:
-                        return result
+                        active_trades.append(result)
         except Exception as e:
             print(f"[Bulk Scan] Error processing {sym}: {e}")
-        return None
 
-    def process_all():
-        active_trades = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            results = list(executor.map(process_symbol, SCREENER_UNIVERSE))
+    # Sort by ADX Score (Strongest trend at the top)
+    active_trades.sort(key=lambda x: x.get("adx_score", 0), reverse=True)
             
-        for r in results:
-            if r is not None:
-                active_trades.append(r)
-                
-        # Sort by ADX Score (Strongest trend at the top)
-        active_trades.sort(key=lambda x: x.get("adx_score", 0), reverse=True)
-                
-        return {
-            "status": "success",
-            "scanned": len(SCREENER_UNIVERSE),
-            "active_trades_found": len(active_trades),
-            "max_price_applied": max_price,
-            "results": active_trades
-        }
-
-    result = await asyncio.to_thread(process_all)
-    return result
+    return {
+        "status": "success",
+        "scanned": len(SCREENER_UNIVERSE),
+        "active_trades_found": len(active_trades),
+        "max_price_applied": max_price,
+        "results": active_trades
+    }
 
 @app.get("/analyze-stock")
 async def analyze_stock(symbol: str, ltp: float = 0.0):
