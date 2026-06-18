@@ -688,6 +688,16 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                   IconButton(
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.refresh_rounded, color: Colors.white54),
+                    iconSize: 26,
+                    onPressed: () {
+                      _triggerScan(symbol);
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                     icon: const Icon(Icons.close_rounded, color: Colors.white54),
                     iconSize: 26,
                     onPressed: () {
