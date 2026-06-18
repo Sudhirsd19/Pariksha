@@ -618,6 +618,34 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: (data['strict_score'] == 100)
+                                ? Colors.deepOrangeAccent.withValues(alpha: 0.2)
+                                : Colors.blueGrey.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: (data['strict_score'] == 100)
+                                  ? Colors.orangeAccent
+                                  : Colors.blueGrey.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Text(
+                            (data['strict_score'] == 100)
+                                ? "🔥 100% WHALE ${data['strict_signal']} 🟠"
+                                : "Whale Score: ${data['strict_score'] ?? '0'}%",
+                            style: TextStyle(
+                              color: (data['strict_score'] == 100)
+                                  ? Colors.orangeAccent
+                                  : Colors.blueGrey.shade300,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1482,21 +1510,33 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                       ),
                                     ),
                                   ],
-                                  if (item['strict_signal'] != null && item['strict_signal'] != 'NONE') ...[
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.deepOrangeAccent.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: Colors.orangeAccent),
-                                      ),
-                                      child: Text(
-                                        "🔥 ${item['strict_score']}% WHALE ${item['strict_signal']} 🟠",
-                                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.w900),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: (item['strict_score'] == 100)
+                                          ? Colors.deepOrangeAccent.withValues(alpha: 0.2)
+                                          : Colors.blueGrey.withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: (item['strict_score'] == 100)
+                                            ? Colors.orangeAccent
+                                            : Colors.blueGrey.withValues(alpha: 0.5),
                                       ),
                                     ),
-                                  ],
+                                    child: Text(
+                                      (item['strict_score'] == 100)
+                                          ? "🔥 100% WHALE ${item['strict_signal']} 🟠"
+                                          : "Whale Score: ${item['strict_score'] ?? '0'}%",
+                                      style: TextStyle(
+                                        color: (item['strict_score'] == 100)
+                                            ? Colors.orangeAccent
+                                            : Colors.blueGrey.shade300,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 2),
@@ -1949,21 +1989,33 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                                           style: TextStyle(color: tileColor, fontSize: 9, fontWeight: FontWeight.w900),
                                         ),
                                       ),
-                                      if (stock['strict_signal'] != null && stock['strict_signal'] != 'NONE') ...[
-                                        const SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.deepOrangeAccent.withValues(alpha: 0.2),
-                                            borderRadius: BorderRadius.circular(6),
-                                            border: Border.all(color: Colors.orangeAccent),
-                                          ),
-                                          child: Text(
-                                            "🔥 ${stock['strict_score']}% WHALE ${stock['strict_signal']} 🟠",
-                                            style: const TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.w900),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: (stock['strict_score'] == 100)
+                                              ? Colors.deepOrangeAccent.withValues(alpha: 0.2)
+                                              : Colors.blueGrey.withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: (stock['strict_score'] == 100)
+                                                ? Colors.orangeAccent
+                                                : Colors.blueGrey.withValues(alpha: 0.5),
                                           ),
                                         ),
-                                      ],
+                                        child: Text(
+                                          (stock['strict_score'] == 100)
+                                              ? "🔥 100% WHALE ${stock['strict_signal']} 🟠"
+                                              : "Whale Score: ${stock['strict_score'] ?? '0'}%",
+                                          style: TextStyle(
+                                            color: (stock['strict_score'] == 100)
+                                                ? Colors.orangeAccent
+                                                : Colors.blueGrey.shade300,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                   Text(
