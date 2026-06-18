@@ -886,6 +886,9 @@ async def scan_stock_signals(symbol: str):
             print(f"[Scan Endpoint] yfinance fallback failed for {ticker}: {e}")
             return {"status": "error", "message": "Failed to fetch data"}
             
+    if df is None or df.empty:
+        return {"status": "error", "message": "Failed to fetch stock data (broker session expired and yfinance rate-limited)"}
+            
     is_nifty_bullish = True
     if nifty_df is not None and not nifty_df.empty:
         from backend.indicators.technical_indicators import TechnicalIndicators
@@ -1232,6 +1235,9 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
             df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
         except Exception:
             return {"status": "error", "message": "Failed to fetch stock data for execution."}
+            
+    if df is None or df.empty:
+        return {"status": "error", "message": "Failed to fetch stock data for execution (broker session expired and yfinance rate-limited)"}
             
     # Fetch live market depth for buyer/seller ratio
     market_depth_buyer_ratio = 1.0
