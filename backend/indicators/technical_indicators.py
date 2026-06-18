@@ -107,6 +107,7 @@ class TechnicalIndicators:
     def apply_all(cls, df: pd.DataFrame) -> pd.DataFrame:
         df = cls.add_ema(df, 9)
         df = cls.add_ema(df, 20)
+        df = cls.add_ema(df, 21)
         df = cls.add_ema(df, 50)
         df = cls.add_rsi(df)
         df = cls.add_atr(df)

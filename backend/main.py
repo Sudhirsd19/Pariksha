@@ -880,11 +880,7 @@ async def scan_stock_signals(symbol: str):
             strict_checklist_engine.evaluate, 
             ticker, 
             df.copy(), 
-            is_nifty_bullish=is_nifty_bullish,
-            is_sector_green=True, # Stubbed until sector mapping is ready
-            market_depth_buyer_ratio=1.6, # Stubbed until level 2 data is integrated
-            promoter_holding=55.0, # Stubbed until fundamentals API
-            debt_to_equity=0.5
+            is_nifty_bullish=is_nifty_bullish
         )
         
     # Merge signals
@@ -949,11 +945,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                     strict_checklist_engine.evaluate, 
                     ticker, 
                     df.copy(), 
-                    is_nifty_bullish=is_nifty_bullish,
-                    is_sector_green=True,
-                    market_depth_buyer_ratio=1.6,
-                    promoter_holding=55.0,
-                    debt_to_equity=0.5
+                    is_nifty_bullish=is_nifty_bullish
                 )
                 if result.get("status") == "success":
                     result["strict_signal"] = strict_result.get("strict_signal", "NONE")
