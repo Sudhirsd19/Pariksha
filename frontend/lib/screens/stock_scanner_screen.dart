@@ -544,10 +544,10 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   }
 
   Widget _buildScanResults(BuildContext context, TradingProvider provider, Map<String, dynamic> data) {
-    final double adxScore = (data['adx_score'] as num?)?.toDouble() ?? 0.0;
-    final String engineUsed = data['engine_used'] ?? "";
-    final List signals = data['signals'] ?? [];
-    final bool actionable = signals.isNotEmpty;
+    final double adxScore = (data['strict_score'] as num?)?.toDouble() ?? 0.0;
+    const String engineUsed = "100-Point Whale Score Engine";
+    final List signals = [];
+    final bool actionable = (data['strict_signal'] ?? 'NONE') != 'NONE';
     
     final String symbol = data['symbol'] ?? "";
     final double ltp = (data['ltp'] as num?)?.toDouble() ?? 0.0;
@@ -568,7 +568,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     final bool hasActive = activeTrade != null;
     final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
-    Color scoreColor = adxScore >= 30 ? Colors.greenAccent : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
+    Color scoreColor = adxScore >= 80 ? Colors.greenAccent : adxScore >= 65 ? Colors.cyanAccent : Colors.white24;
 
     return Column(
       children: [
@@ -734,18 +734,18 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
-                                adxScore.toStringAsFixed(1),
+                                adxScore.toInt().toString(),
                                 style: TextStyle(
                                   color: scoreColor,
-                                  fontSize: 14,
+                                  fontSize: 16,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
                               Text(
-                                "ADX",
+                                "SCORE",
                                 style: TextStyle(
                                   color: scoreColor.withValues(alpha: 0.7),
-                                  fontSize: 8,
+                                  fontSize: 7,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -2013,19 +2013,18 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                 children: _results.map((stock) {
                   final String symbol = stock['symbol'] ?? '';
                   final double ltp = (stock['ltp'] as num?)?.toDouble() ?? 0;
-                  final double adxScore = (stock['adx_score'] as num?)?.toDouble() ?? 0;
-                  final String engineUsed = stock['engine_used'] ?? '';
-                  final List signals = stock['signals'] ?? [];
-                  final String signal = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
-                  final String signalTime = signals.isNotEmpty ? (signals.first['time'] ?? '') : '';
-                  final String reason = signals.isNotEmpty ? (signals.first['reason'] ?? '') : '';
+                  final double adxScore = (stock['strict_score'] as num?)?.toDouble() ?? 0;
+                  const String engineUsed = '100-Point Whale Score Engine';
+                  final String signal = stock['strict_signal'] ?? 'NONE';
+                  const String signalTime = 'Today';
+                  final String reason = 'Strict Scorecard value: ${stock['strict_score'] ?? 0}/100';
                   
-                  final bool isBuySignal = signal == 'BUY';
-                  final Color tileColor  = isBuySignal ? Colors.greenAccent : (signal == 'SELL' ? Colors.redAccent : Colors.amberAccent);
+                  final bool isBuySignal = signal.contains('BUY');
+                  final Color tileColor  = isBuySignal ? Colors.greenAccent : (signal.contains('SELL') ? Colors.redAccent : Colors.amberAccent);
 
                   // Score color
-                  final Color scoreColor = adxScore >= 30 ? Colors.greenAccent
-                      : adxScore >= 20 ? Colors.cyanAccent : Colors.deepPurpleAccent;
+                  final Color scoreColor = adxScore >= 80 ? Colors.greenAccent
+                      : adxScore >= 65 ? Colors.cyanAccent : Colors.white24;
 
                   // Find if this stock has an active trade open today
                   final now = DateTime.now();

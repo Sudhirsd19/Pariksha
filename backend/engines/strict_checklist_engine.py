@@ -20,6 +20,9 @@ class StrictChecklistEngine:
         if df is None or df.empty or len(df) < 30:
             return {"score": 0, "strict_signal": "NONE", "reasons": ["Not enough data"], "breakdown": {}}
             
+        # Standardize columns to lowercase
+        df.columns = [col.lower() for col in df.columns]
+        
         # Ensure all indicators are calculated
         if 'MACD' not in df.columns or 'EMA_21' not in df.columns or 'ATR' not in df.columns:
             df = TechnicalIndicators.apply_all(df)

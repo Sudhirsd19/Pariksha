@@ -871,6 +871,14 @@ async def scan_stock_signals(symbol: str):
         if last_nifty['close'] < last_nifty['EMA_50']:
             is_nifty_bullish = False
             
+    # Extract current LTP from historical data
+    current_price = 0.0
+    if df is not None and not df.empty:
+        for col in ['close', 'Close']:
+            if col in df.columns:
+                current_price = float(df.iloc[-1][col])
+                break
+
     strict_result = await asyncio.to_thread(
         strict_checklist_engine.evaluate, 
         ticker, 
@@ -882,9 +890,11 @@ async def scan_stock_signals(symbol: str):
     return {
         "status": "success",
         "symbol": base_symbol,
+        "ltp": current_price,
         "strict_signal": strict_result.get("strict_signal", "NONE"),
         "strict_score": strict_result.get("strict_score", 0),
-        "breakdown": strict_result.get("breakdown", {})
+        "breakdown": strict_result.get("breakdown", {}),
+        "strict_breakdown": strict_result.get("breakdown", {})
     }
 
 @app.get("/api/scanner/bulk-scan")

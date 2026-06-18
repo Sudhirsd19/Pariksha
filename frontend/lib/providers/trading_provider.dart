@@ -586,7 +586,9 @@ class TradingProvider with ChangeNotifier {
 
       // Check again after read (TOCTOU prevention)
       final cleanSymbol = symbol.replaceAll('.NS', '');
-      if (currentList.any((item) => item['symbol'].toString().replaceAll('.NS', '') == cleanSymbol)) return;
+      if (currentList.any((item) => item['symbol'].toString().replaceAll('.NS', '') == cleanSymbol)) {
+        return;
+      }
 
       currentList.add({
         "symbol": symbol,
@@ -688,10 +690,11 @@ class TradingProvider with ChangeNotifier {
     try {
         final result = await _apiService.analyzeStock(item['symbol']);
         if (result != null && result['status'] == 'success') {
-          item['adx_score'] = result['adx_score'];
-          item['engine_used'] = result['engine_used'];
-          item['signals'] = result['signals'];
-          item['ltp'] = result['ltp'];
+          item['adx_score'] = (result['strict_score'] as num?)?.toDouble() ?? 0.0;
+          item['strict_score'] = result['strict_score'] ?? 0;
+          item['strict_signal'] = result['strict_signal'] ?? 'NONE';
+          item['strict_breakdown'] = result['strict_breakdown'] ?? {};
+          item['ltp'] = (result['ltp'] as num?)?.toDouble() ?? 0.0;
           if (!_isDisposed) notifyListeners();
         }
     } catch (e) {
