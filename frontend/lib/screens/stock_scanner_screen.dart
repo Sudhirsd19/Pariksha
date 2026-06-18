@@ -545,8 +545,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
 
   Widget _buildScanResults(BuildContext context, TradingProvider provider, Map<String, dynamic> data) {
     final double adxScore = (data['strict_score'] as num?)?.toDouble() ?? 0.0;
-    const String engineUsed = "100-Point Whale Score Engine";
-    final List signals = [];
+    // BUG-1 FIX: Removed dead `signals` list. Backend returns strict_signal/strict_score/strict_breakdown,
+    // not a signals[] list. The signals card below has been removed accordingly.
     final bool actionable = (data['strict_signal'] ?? 'NONE') != 'NONE';
     
     final String symbol = data['symbol'] ?? "";
@@ -760,95 +760,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 20),
-
-        // Signal Items
-        if (signals.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.02),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "AUTO-ROUTER SIGNALS ($engineUsed)".toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white30,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 2,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: signals.length,
-                  separatorBuilder: (context, idx) => Divider(
-                    color: Colors.white.withValues(alpha: 0.03),
-                    height: 24,
-                  ),
-                  itemBuilder: (context, idx) {
-                    final item = signals[idx];
-                    final String type = item['type'] ?? "UNKNOWN";
-                    final String time = item['time'] ?? "";
-                    final String reason = item['reason'] ?? "";
-
-                    final bool isBuy = type == 'BUY';
-                    final IconData icon = isBuy ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded;
-                    final Color iconColor = isBuy ? Colors.greenAccent : Colors.redAccent;
-
-                    return Row(
-                      children: [
-                        Icon(
-                          icon,
-                          color: iconColor,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "$type SIGNAL",
-                                style: TextStyle(
-                                  color: iconColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                reason,
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          time,
-                          style: const TextStyle(
-                            color: Colors.white30,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
 
         // Whale Score Breakdown
         if (data['strict_breakdown'] != null && (data['strict_breakdown'] as Map).isNotEmpty)
@@ -1353,7 +1265,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                   const Text('MAX LOSS', style: TextStyle(color: Colors.redAccent, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
                                   const SizedBox(height: 3),
                                   Text('-₹${slLoss.toStringAsFixed(0)}', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w900, fontSize: 14)),
-                                  Text('if SL hit (2%)', style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.5), fontSize: 9)),
+                                  Text('~ATR-based SL', style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.5), fontSize: 9)),
                                 ],
                               ),
                             ),
@@ -1373,12 +1285,33 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                                   const Text('MAX PROFIT', style: TextStyle(color: Colors.greenAccent, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
                                   const SizedBox(height: 3),
                                   Text('+₹${tpProfit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.w900, fontSize: 14)),
-                                  Text('if TP hit (4%)', style: TextStyle(color: Colors.greenAccent.withValues(alpha: 0.5), fontSize: 9)),
+                                  Text('~ATR-based TP', style: TextStyle(color: Colors.greenAccent.withValues(alpha: 0.5), fontSize: 9)),
                                 ],
                               ),
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 10),
+                      // IMPROVE-2: Risk:Reward ratio display
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.03),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.balance_rounded, size: 12, color: Colors.white38),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Risk : Reward  →  1 : ${slLoss > 0 ? (tpProfit / slLoss).clamp(0.0, 99.0).toStringAsFixed(2) : "∞"}',
+                              style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 20),
                     ],
@@ -1592,7 +1525,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     GestureDetector(
                       onTap: () {
                         _searchController.text = symbol;
-                        _triggerScan(symbol);
+                        // BUG-4 FIX: Pass known LTP so scan result shows correct price instead of ₹0.00
+                        _triggerScan(symbol, ltp: ltp);
                       },
                       child: Row(
                         children: [
@@ -1977,12 +1911,45 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
           if (_hasScanned) ...[
             const SizedBox(height: 20),
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 14),
-                const SizedBox(width: 6),
-                Text(
-                  "$_scanned stocks scanned   •   ${_results.length} picks found",
-                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 14),
+                    const SizedBox(width: 6),
+                    Text(
+                      "$_scanned stocks scanned   •   ${_results.length} picks found",
+                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                  ],
+                ),
+                // BUG-7 FIX: Clear/Reset button so user can run a fresh scan
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _hasScanned = false;
+                    _results = [];
+                    _scanned = 0;
+                    _error = null;
+                  }),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.close_rounded, color: Colors.white30, size: 12),
+                        SizedBox(width: 4),
+                        Text(
+                          'CLEAR',
+                          style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),

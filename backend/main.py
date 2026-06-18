@@ -83,6 +83,7 @@ last_execution_candle = { "NIFTY": None, "BANKNIFTY": None }
 last_checked_candle = { "NIFTY": None, "BANKNIFTY": None }
 last_reset_date = config.get_ist_time().date()
 ws_manager = None
+ws_current_score = 0  # Live market score (0-100) broadcast via WS + synced to Firestore
 
 # --- CORE COMPONENTS ---
 broker = AngelOneBroker()
@@ -343,6 +344,21 @@ async def ltp_broadcaster():
                     for trade in (closed_trades or []):
                         send_push_notification(f"🏁 {trade['symbol']} CLOSED: {trade['close_data']['result']}", f"PnL: Rs. {trade['close_data']['pnl']:.2f}")
 
+                # BUG-9 FIX: Auto Square-Off at 3:10 PM for ALL active trades (including equity)
+                # trading_loop() only covers F&O engine trades. Equity trades executed manually
+                # via /execute-stock-trade are monitored here in ltp_broadcaster.
+                if now_ist.hour == 15 and now_ist.minute >= 10:
+                    _sq_date = getattr(ltp_broadcaster, '_sq_date', None)
+                    if _sq_date != now_ist.date() and trade_manager.active_trades:
+                        ltp_broadcaster._sq_date = now_ist.date()
+                        sq_count = await asyncio.to_thread(trade_manager.emergency_square_off, current_ltps)
+                        if sq_count > 0:
+                            print(f"[AutoSquareOff-Broadcaster] {sq_count} position(s) squared off at 3:10 PM IST")
+                            send_push_notification(
+                                "⚡ AUTO SQUARE-OFF",
+                                f"{sq_count} position(s) auto-closed at 3:10 PM IST to avoid broker penalties"
+                            )
+
             # 3. Adaptive Throttling (Broadcast only if movement > 0.1 points)
             if connected_ws_clients and abs(current_ltp - last_broadcast_ltp) > 0.1:
                 last_broadcast_ltp = current_ltp
@@ -374,6 +390,7 @@ async def ltp_broadcaster():
                     "is_active": trading_active,
                     "trades_today": risk_manager.trades_today,
                     "daily_loss": risk_manager.daily_loss,
+                    "current_score": ws_current_score,  # Live score — updated on every scan
                 })
                 for client in list(connected_ws_clients):
                     try: await client.send_text(payload)
@@ -797,9 +814,14 @@ async def smart_screener(max_price: float = 500.0, min_score: int = 70):
             "symbol": r["symbol"],
             "ltp": round(float(r.get("ltp") or 0.0), 2),
             "score": r.get("score", 0),
+            # BUG-3 FIX: Include strict_score/strict_signal/strict_breakdown so
+            # the frontend SmartScreener card can display Whale Score correctly.
+            "strict_score": r.get("strict_score", r.get("score", 0)),
+            "strict_signal": r.get("strict_signal", "BUY" if r.get("htf_trend") == "Bullish" else "SELL"),
+            "strict_breakdown": r.get("breakdown", {}),
             "htf_trend": r.get("htf_trend", "NEUTRAL"),
             "value_zone": r.get("value_zone", False),
-            "signal": "BUY" if r.get("htf_trend") == "Bullish" else "SELL",
+            "signal": r.get("strict_signal", "BUY" if r.get("htf_trend") == "Bullish" else "SELL"),
             "reason": r.get("reason", ""),
             "total_buyers": r.get("total_buyers", 0),
             "total_sellers": r.get("total_sellers", 0),
@@ -886,6 +908,10 @@ async def scan_stock_signals(symbol: str):
         is_nifty_bullish=is_nifty_bullish
     )
     
+    # Update global score so it gets broadcast via WebSocket + written to Firestore
+    global ws_current_score
+    ws_current_score = strict_result.get("strict_score", 0)
+
     # Return directly from strict_checklist_engine
     return {
         "status": "success",
@@ -1166,10 +1192,20 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     )
     
     strict_score = strict_result.get("strict_score", 0)
-    
-    # Optional: Block execution if score is completely garbage, but usually we let manual execute
-    if strict_score < 30 and side == "BUY":
-        print(f"[Warning] Manual BUY executed with low strict score: {strict_score}")
+
+    # BUG-6 FIX: Enforce minimum score guard for both BUY and SELL.
+    # Score < 20/100 means no single technical or fundamental condition is met.
+    # This is a safety rail, not a restriction on informed manual trades.
+    MIN_MANUAL_SCORE = 20
+    if strict_score < MIN_MANUAL_SCORE:
+        return {
+            "status": "error",
+            "message": (
+                f"{symbol} ka Whale Score bahut kam hai ({strict_score}/100). "
+                f"Minimum {MIN_MANUAL_SCORE}/100 required. "
+                "Scan dobara karo ya dusra stock choose karo."
+            )
+        }
         
     trading_symbol = f"{base_symbol}-EQ"
     price = ltp if ltp > 0 else (df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1])
@@ -1400,19 +1436,32 @@ async def trading_loop():
                     gap_ups.sort(key=lambda x: -x['gap_pct'])
                     gap_downs.sort(key=lambda x: x['gap_pct'])
 
-                    # Auto-add to Firestore watchlist (top 5 each)
-                    for item in (gap_ups[:5] + gap_downs[:5]):
-                        try:
-                            direction = "BUY" if item['gap_pct'] > 0 else "SELL"
-                            db_manager.db.collection("watchlist").document(item['symbol']).set({
-                                "symbol": item['symbol'],
-                                "side":   direction,
-                                "gap_pct": item['gap_pct'],
-                                "source": "GAP_SCAN",
-                                "added_at": int(time.time() * 1000),
-                            }, merge=True)
-                        except Exception:
-                            pass
+                    # BUG-8 FIX: Write to correct Firestore path.
+                    # App reads watchlist from 'quantum_system/watchlist' (items array),
+                    # NOT from 'watchlist/{symbol}' (old wrong path).
+                    try:
+                        wl_ref = db_manager.db.collection("quantum_system").document("watchlist")
+                        wl_doc = wl_ref.get()
+                        existing_items = wl_doc.to_dict().get("items", []) if wl_doc.exists else []
+                        existing_symbols = {e.get("symbol") for e in existing_items}
+                        for item in (gap_ups[:5] + gap_downs[:5]):
+                            if item['symbol'] not in existing_symbols:
+                                direction = "BUY" if item['gap_pct'] > 0 else "SELL"
+                                existing_items.append({
+                                    "symbol": item['symbol'],
+                                    "side": direction,
+                                    "gap_pct": item['gap_pct'],
+                                    "source": "GAP_SCAN",
+                                    "ltp": item.get('current', 0),
+                                    "strict_score": 0,
+                                    "strict_signal": direction,
+                                    "added_at": int(time.time() * 1000),
+                                })
+                                existing_symbols.add(item['symbol'])
+                        wl_ref.set({"items": existing_items}, merge=True)
+                        print(f"[GapScan] Added {len(gap_ups[:5]) + len(gap_downs[:5])} stocks to quantum_system/watchlist")
+                    except Exception as wl_err:
+                        print(f"[GapScan] Watchlist write failed: {wl_err}")
 
                     # Telegram alert
                     try:
@@ -1624,6 +1673,7 @@ def sync_status_to_db():
         "signal_count": len(signals),
         "daily_loss": risk_manager.daily_loss,
         "trades_today": risk_manager.trades_today,
+        "current_score": ws_current_score,  # Live Whale Score (0-100) for dashboard display
     }
     db_manager.update_system_status(status)
 

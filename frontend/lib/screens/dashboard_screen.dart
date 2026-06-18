@@ -742,7 +742,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildScoreIndicator(int score) {
-    final color = score >= 8 ? Colors.cyanAccent : Colors.white24;
+    final color = score >= 80 ? Colors.greenAccent : score >= 65 ? Colors.cyanAccent : Colors.white24;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -752,7 +752,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          '$score/14',
+          '$score/100',
           style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: -0.5),
         ),
       ],

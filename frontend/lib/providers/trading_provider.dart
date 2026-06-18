@@ -176,6 +176,10 @@ class TradingProvider with ChangeNotifier {
           if (jsonData['daily_loss'] != null) {
             _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
           }
+          // Fix: Read live Whale Score from WebSocket (updated on every stock scan)
+          if (jsonData['current_score'] != null) {
+            _currentScore = (jsonData['current_score'] as num).toInt();
+          }
           
           // Watchlist live update
           if (jsonData['symbol_ltps'] != null) {
