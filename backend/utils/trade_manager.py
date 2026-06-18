@@ -424,15 +424,24 @@ class TradeManager:
             
         return trades_to_close # Return so main loop can send notifications
 
-    def emergency_square_off(self, ltp_dict):
+    def emergency_square_off(self, ltp_dict, get_ltp_fallback=None):
         trades_to_close = []
         with self._lock:  # FIX C-2: Hold lock to prevent race with monitor_trades()
             for trade in list(self.active_trades):  # FIX C-2: Iterate copy under lock
                 token = trade.get("token")
-                if not token or token not in ltp_dict:
-                    exit_price = trade["entry"]
-                else:
+                exit_price = None
+                if token and token in ltp_dict:
                     exit_price = ltp_dict[token]
+                
+                # Double-Safety Fallback: Try calling get_ltp_fallback callback if price not found in live dict
+                if not exit_price and get_ltp_fallback:
+                    try:
+                        exit_price = get_ltp_fallback(trade)
+                    except Exception as fallback_err:
+                        print(f"[SquareOff Fallback Error] {fallback_err}")
+                
+                if not exit_price:
+                    exit_price = trade["entry"]
                 
                 if trade.get("instrument_type") == "OPTIONS":
                     # Options are always bought (CE for BUY signal, PE for SELL signal)

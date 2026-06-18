@@ -90,6 +90,74 @@ broker = AngelOneBroker()
 risk_manager = RiskManager(initial_capital=100000)
 cooldown_engine = CooldownEngine(minutes=10) # 10 min cooldown
 
+def ensure_websocket_connected():
+    global ws_manager
+    if not broker.session:
+        try:
+            broker.login()
+        except Exception as e:
+            print(f"[WebSocket Init] Broker login failed: {e}")
+            return False
+            
+    if broker.session:
+        if not ws_manager:
+            try:
+                ws_manager = MarketWebSocket(
+                    broker.session['jwtToken'], 
+                    config.ANGEL_API_KEY, 
+                    config.ANGEL_CLIENT_ID, 
+                    broker.feed_token
+                )
+                ws_manager.connect()
+                print("[WebSocket Init] Connected successfully.")
+            except Exception as e:
+                print(f"[WebSocket Init] Connection failed: {e}")
+                ws_manager = None
+                return False
+        elif not ws_manager.running:
+            try:
+                ws_manager.connect()
+                print("[WebSocket Init] Reconnected successfully.")
+            except Exception as e:
+                print(f"[WebSocket Init] Reconnection failed: {e}")
+                return False
+        return True
+    return False
+
+def get_live_price_fallback(trade):
+    sym = trade.get("symbol", "").replace("-EQ", "")
+    tok = trade.get("token")
+    inst = trade.get("instrument_type", "EQUITY")
+    exch = "NSE" if inst == "EQUITY" else "NFO"
+    
+    # Throttle REST API calls to respect rate limit (max 3 req/sec)
+    time.sleep(0.4)
+    
+    if tok and broker.session:
+        try:
+            # Query real-time LTP from AngelOne API
+            price = broker.get_market_data(exch, sym, tok)
+            if price and price > 0:
+                print(f"[SquareOff Fallback] Fetched live price from AngelOne for {sym}: {price}")
+                return price
+        except Exception as e:
+            print(f"[SquareOff Fallback] Broker fetch failed for {sym}: {e}")
+            
+    # Fallback to yfinance if AngelOne fails
+    try:
+        import yfinance as yf
+        ticker = f"{sym}.NS"
+        df = yf.Ticker(ticker).history(period="1d")
+        if not df.empty:
+            price = float(df['Close'].iloc[-1])
+            if price > 0:
+                print(f"[SquareOff Fallback] Fetched live price from yfinance for {sym}: {price}")
+                return price
+    except Exception as e:
+        print(f"[SquareOff Fallback] yfinance fetch failed for {sym}: {e}")
+        
+    return None
+
 @app.on_event("startup")
 async def startup_event():
     init_firebase()
@@ -100,6 +168,8 @@ async def startup_event():
     # Try to login to broker on startup to generate active session
     try:
         broker.login()
+        # Startup WebSocket immediately if login succeeded
+        ensure_websocket_connected()
     except Exception as e:
         print(f"[Startup] Angel One Login failed: {e}")
         
@@ -195,8 +265,20 @@ async def ltp_broadcaster():
     tokens = {s: token_manager.get_token(s) for s in symbols}
     simulated_ltps = {tokens["NIFTY"]: 24150.0, tokens["BANKNIFTY"]: 55300.0}
     
+    # Periodic check timer for WebSocket auto-healing
+    last_ws_check = 0
+    
     while True:
         try:
+            # Auto-heal WebSocket every 15 seconds if disconnected or None
+            now_time = time.time()
+            if now_time - last_ws_check > 15:
+                last_ws_check = now_time
+                try:
+                    await asyncio.to_thread(ensure_websocket_connected)
+                except Exception as ws_err:
+                    print(f"[Broadcaster WS AutoHeal Error]: {ws_err}")
+
             # 1. Health & Stale Feed Check
             is_healthy = health_monitor.is_feed_healthy()
             
@@ -351,7 +433,7 @@ async def ltp_broadcaster():
                     _sq_date = getattr(ltp_broadcaster, '_sq_date', None)
                     if _sq_date != now_ist.date() and trade_manager.active_trades:
                         ltp_broadcaster._sq_date = now_ist.date()
-                        sq_count = await asyncio.to_thread(trade_manager.emergency_square_off, current_ltps)
+                        sq_count = await asyncio.to_thread(trade_manager.emergency_square_off, current_ltps, get_live_price_fallback)
                         if sq_count > 0:
                             print(f"[AutoSquareOff-Broadcaster] {sq_count} position(s) squared off at 3:10 PM IST")
                             send_push_notification(
@@ -642,7 +724,7 @@ async def emergency_kill():
     persistence_manager.log_event("CRITICAL", "KILL_SWITCH_ACTIVATED", "User triggered emergency shutdown")
     # FIX: Pass real LTP dict so trade PnL is calculated correctly on close
     ltp_dict = ws_manager.ltp_data if ws_manager else {}
-    count = trade_manager.emergency_square_off(ltp_dict)
+    count = trade_manager.emergency_square_off(ltp_dict, get_live_price_fallback)
     broker.square_off_all()
     await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "killed", "trades_closed": count}
@@ -654,7 +736,7 @@ async def square_off():
     trading_active = False
     broker.square_off_all()
     ltp_dict = ws_manager.ltp_data if ws_manager else {}
-    count = trade_manager.emergency_square_off(ltp_dict)
+    count = trade_manager.emergency_square_off(ltp_dict, get_live_price_fallback)
     await asyncio.to_thread(sync_status_to_db)  # FIX: was not awaited
     return {"status": "success", "message": f"Square Off: {count} trades closed."}
 
@@ -1385,23 +1467,8 @@ async def trading_loop():
         trading_active = False
         return
     
-    # Refresh WebSocket with fresh tokens
-    if ws_manager:
-        try:
-            ws_manager.auth_token = broker.session['jwtToken']
-            ws_manager.feed_token = broker.feed_token
-            ws_manager.connect()
-        except:
-            ws_manager = None # Force recreation if refresh fails
-
-    if not ws_manager:
-        ws_manager = MarketWebSocket(
-            broker.session['jwtToken'], 
-            config.ANGEL_API_KEY, 
-            config.ANGEL_CLIENT_ID, 
-            broker.feed_token
-        )
-        ws_manager.connect()
+    # Refresh/Connect WebSocket with fresh tokens using helper
+    await asyncio.to_thread(ensure_websocket_connected)
 
     symbols = ["NIFTY", "BANKNIFTY"]
     gap_scan_done = False  # Reset on each trading_loop start (once per day)
@@ -1425,7 +1492,7 @@ async def trading_loop():
                     trading_active = False  # FIX C-1: Set flag BEFORE calling square_off to prevent double-call
                     await asyncio.to_thread(sync_status_to_db)
                     ltp_dict = ws_manager.ltp_data if ws_manager else {}
-                    trade_manager.emergency_square_off(ltp_dict)
+                    trade_manager.emergency_square_off(ltp_dict, get_live_price_fallback)
                     await asyncio.to_thread(broker.square_off_all)
 
                     # Telegram: daily summary
