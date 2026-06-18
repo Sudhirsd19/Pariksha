@@ -1494,10 +1494,28 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
             else
               GestureDetector(
                 onTap: () => provider.refreshWatchlist(),
-                child: const Icon(
-                  Icons.refresh_rounded,
-                  color: Colors.white30,
-                  size: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurpleAccent.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.deepPurpleAccent.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.refresh_rounded, color: Colors.deepPurpleAccent, size: 14),
+                      SizedBox(width: 4),
+                      Text(
+                        "REFRESH",
+                        style: TextStyle(
+                          color: Colors.deepPurpleAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
