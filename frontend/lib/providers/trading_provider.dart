@@ -585,7 +585,8 @@ class TradingProvider with ChangeNotifier {
           : [];
 
       // Check again after read (TOCTOU prevention)
-      if (currentList.any((item) => item['symbol'] == symbol)) return;
+      final cleanSymbol = symbol.replaceAll('.NS', '');
+      if (currentList.any((item) => item['symbol'].toString().replaceAll('.NS', '') == cleanSymbol)) return;
 
       currentList.add({
         "symbol": symbol,
@@ -622,8 +623,9 @@ class TradingProvider with ChangeNotifier {
                   .map((e) => Map<String, dynamic>.from(e as Map)))
           : [];
 
+      final cleanSymbol = symbol.replaceAll('.NS', '');
       final updatedList =
-          currentList.where((item) => item['symbol'] != symbol).toList();
+          currentList.where((item) => item['symbol'].toString().replaceAll('.NS', '') != cleanSymbol).toList();
       await docRef.set({"items": updatedList});
       scaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(

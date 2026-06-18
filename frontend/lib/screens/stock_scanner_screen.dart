@@ -696,7 +696,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                   ),
                   const SizedBox(width: 12),
                   (() {
-                    final inWatchlist = provider.watchlist.any((item) => item['symbol'] == symbol);
+                    final cleanSymbol = symbol.replaceAll('.NS', '');
+                    final inWatchlist = provider.watchlist.any((item) => item['symbol'].toString().replaceAll('.NS', '') == cleanSymbol);
                     return IconButton(
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
