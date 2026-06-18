@@ -884,6 +884,7 @@ async def scan_stock_signals(symbol: str):
     if result.get("status") == "success":
         result["strict_signal"] = strict_result.get("strict_signal", "NONE")
         result["strict_score"] = strict_result.get("strict_score", 0)
+        result["strict_breakdown"] = strict_result.get("breakdown", {})
         
     return result
 

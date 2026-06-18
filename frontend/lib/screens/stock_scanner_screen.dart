@@ -849,6 +849,107 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
           ),
         const SizedBox(height: 24),
 
+        // Whale Score Breakdown
+        if (data['strict_breakdown'] != null && (data['strict_breakdown'] as Map).isNotEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.02),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "WHALE SCORE BREAKDOWN".toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white30,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    Text(
+                      "${data['strict_score'] ?? 0}/100",
+                      style: TextStyle(
+                        color: (data['strict_score'] == 100) ? Colors.orangeAccent : Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: (data['strict_breakdown'] as Map).length,
+                  itemBuilder: (context, idx) {
+                    final key = (data['strict_breakdown'] as Map).keys.elementAt(idx);
+                    final value = (data['strict_breakdown'] as Map)[key];
+                    // Define max points per category
+                    int maxPts = 0;
+                    if (key == "Macro Trend") maxPts = 15;
+                    else if (key == "Fundamentals") maxPts = 10;
+                    else if (key == "Price Action") maxPts = 25;
+                    else if (key == "Volume") maxPts = 20;
+                    else if (key == "Momentum") maxPts = 15;
+                    else if (key == "Risk & Execution") maxPts = 15;
+
+                    final double pct = maxPts > 0 ? ((value as num).toDouble() / maxPts) : 0;
+                    final Color barColor = pct == 1.0 ? Colors.greenAccent : (pct > 0 ? Colors.orangeAccent : Colors.white24);
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                key.toString(),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                "$value / $maxPts PTS",
+                                style: TextStyle(
+                                  color: barColor,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: pct,
+                              backgroundColor: Colors.white.withValues(alpha: 0.05),
+                              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                              minHeight: 4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        if (data['strict_breakdown'] != null && (data['strict_breakdown'] as Map).isNotEmpty)
+          const SizedBox(height: 24),
+
         // Execution Row
         (() {
           if (hasActive) {
