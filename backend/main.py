@@ -970,6 +970,13 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                     df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
                     await asyncio.sleep(0.4)  # Respect AngelOne 3 req/sec rate limit
                     
+            if df is None or df.empty:
+                try:
+                    import yfinance as yf
+                    df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
+                except Exception as e:
+                    print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
+
             result = await asyncio.to_thread(auto_router.get_signals_for_symbol, ticker, df)
             
             # Process Strict Checklist Logic

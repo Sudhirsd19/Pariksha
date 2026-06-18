@@ -1535,9 +1535,18 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
               final double adxScore = (item['adx_score'] as num?)?.toDouble() ?? 0;
               final String engineUsed = item['engine_used'] ?? '';
               final List signals = item['signals'] ?? [];
-              final String rec = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
               final String signalTime = signals.isNotEmpty ? (signals.first['time'] ?? '') : '';
               final String reason = signals.isNotEmpty ? (signals.first['reason'] ?? '') : '';
+              
+              String rec = 'WAIT';
+              final String strictSignal = item['strict_signal'] ?? 'NONE';
+              if (strictSignal.contains('BUY')) {
+                rec = 'BUY';
+              } else if (strictSignal.contains('SELL')) {
+                rec = 'SELL';
+              } else {
+                rec = signals.isNotEmpty ? (signals.first['type'] ?? 'WAIT') : 'WAIT';
+              }
 
               // Find if this stock has an active trade open
               final now = DateTime.now();
