@@ -295,6 +295,16 @@ async def ltp_broadcaster():
                     if tok:
                         active_trade_tokens.append(tok)
 
+            # Ensure all active trades are subscribed to the WebSocket
+            if ws_manager and ws_manager.running:
+                with trade_manager._lock:
+                    for t in trade_manager.active_trades:
+                        tok = t.get("token")
+                        inst = t.get("instrument_type", "EQUITY")
+                        exch_type = 1 if inst == "EQUITY" else 2
+                        if tok:
+                            ws_manager.subscribe_token(tok, exch_type)
+
             # Clean up simulated_ltps for inactive trade tokens
             default_tokens = set(tokens.values())
             for t_key in list(simulated_ltps.keys()):
@@ -356,7 +366,24 @@ async def ltp_broadcaster():
                             yf_symbols.append(sym + ".NS")
                         token_to_symbol[t.get("token")] = f"{sym}.NS"
 
-            if not is_healthy and yf_symbols:
+            # Check if any active trade token or watchlist token has a missing/zero price in current_ltps
+            has_missing_prices = False
+            for tok in active_trade_tokens:
+                if not ws_manager or not ws_manager.get_ltp(tok):
+                    has_missing_prices = True
+                    break
+            
+            for sym_ns in yf_symbols:
+                w_tok = None
+                for t_key, s_val in token_to_symbol.items():
+                    if s_val == sym_ns:
+                        w_tok = t_key
+                        break
+                if w_tok and (not ws_manager or not ws_manager.get_ltp(w_tok)):
+                    has_missing_prices = True
+                    break
+
+            if (not is_healthy or has_missing_prices) and yf_symbols:
                 # Throttle yfinance calls to once every 10 seconds per loop
                 if not hasattr(ltp_broadcaster, "last_yf_time") or time.time() - ltp_broadcaster.last_yf_time > 10:
                     import yfinance as yf

@@ -13,6 +13,7 @@ class MarketWebSocket:
         self.ltp_data = {}
         self.sws = None
         self.running = False
+        self.subscribed_tokens = set()
 
     def on_data(self, wsapp, msg):
         """Callback when data is received"""
@@ -45,6 +46,7 @@ class MarketWebSocket:
     def on_close(self, wsapp):
         print("WebSocket Closed")
         self.running = False
+        self.subscribed_tokens.clear()
         # FIX L-5: Removed is_connected guard — was False on first connect so reconnection was SKIPPED
         # FIX L-6: Replaced blocking time.sleep(5) with a daemon thread to avoid blocking the WS thread
         print("Attempting to reconnect WebSocket in 5s...")
@@ -69,12 +71,15 @@ class MarketWebSocket:
 
     def subscribe_token(self, token, exchange_type=2):
         """Dynamically subscribe to a new token feed (like an option contract)."""
+        if token in self.subscribed_tokens:
+            return
         if self.sws and self.running:
             correlation_id = f"sub_{token}"
             tokens = [{"exchangeType": exchange_type, "tokens": [token]}]
             try:
                 self.sws.subscribe(correlation_id, 3, tokens)
-                print(f"[WebSocket] Dynamically subscribed to option token: {token}")
+                self.subscribed_tokens.add(token)
+                print(f"[WebSocket] Dynamically subscribed to token: {token}")
             except Exception as e:
                 print(f"[WebSocket] Error subscribing to {token}: {e}")
 
