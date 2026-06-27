@@ -369,7 +369,7 @@ async def ltp_broadcaster():
             # Check if any active trade token or watchlist token has a missing/zero price in current_ltps
             has_missing_prices = False
             for tok in active_trade_tokens:
-                if not ws_manager or not ws_manager.get_ltp(tok):
+                if tok in token_to_symbol and (not ws_manager or not ws_manager.get_ltp(tok)):
                     has_missing_prices = True
                     break
             
