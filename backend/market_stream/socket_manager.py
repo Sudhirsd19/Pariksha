@@ -34,7 +34,7 @@ class MarketWebSocket:
         banknifty_token = token_manager.get_token("BANKNIFTY")
         
         tokens = [
-            {"exchangeType": 2, "tokens": [nifty_token, banknifty_token]},   # NFO Futures
+            {"exchangeType": 2, "tokens": [str(nifty_token), str(banknifty_token)]},   # NFO Futures
             {"exchangeType": 1, "tokens": ["99926000", "99926009"]}  # NSE Index
         ]
         self.sws.subscribe(correlation_id, mode, tokens)
@@ -71,17 +71,18 @@ class MarketWebSocket:
 
     def subscribe_token(self, token, exchange_type=2):
         """Dynamically subscribe to a new token feed (like an option contract)."""
-        if token in self.subscribed_tokens:
+        token_str = str(token)  # Always cast to str — AngelOne API expects string tokens
+        if token_str in self.subscribed_tokens:
             return
         if self.sws and self.running:
-            correlation_id = f"sub_{token}"
-            tokens = [{"exchangeType": exchange_type, "tokens": [token]}]
+            correlation_id = f"sub_{token_str}"
+            tokens = [{"exchangeType": exchange_type, "tokens": [token_str]}]
             try:
                 self.sws.subscribe(correlation_id, 3, tokens)
-                self.subscribed_tokens.add(token)
-                print(f"[WebSocket] Dynamically subscribed to token: {token}")
+                self.subscribed_tokens.add(token_str)
+                print(f"[WebSocket] Dynamically subscribed to token: {token_str}")
             except Exception as e:
-                print(f"[WebSocket] Error subscribing to {token}: {e}")
+                print(f"[WebSocket] Error subscribing to {token_str}: {e}")
 
     def get_ltp(self, token):
         return self.ltp_data.get(token)

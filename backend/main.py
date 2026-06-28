@@ -1087,6 +1087,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
     affordable_symbols = list(SCREENER_UNIVERSE)
     try:
         import yfinance as yf
+        import pandas as pd
         tickers = [f"{s}.NS" for s in SCREENER_UNIVERSE]
         raw = await asyncio.to_thread(
             lambda: yf.download(tickers, period="2d", interval="1d", progress=False, threads=False)
@@ -1519,7 +1520,7 @@ async def trading_loop():
                     trading_active = False  # FIX C-1: Set flag BEFORE calling square_off to prevent double-call
                     await asyncio.to_thread(sync_status_to_db)
                     ltp_dict = ws_manager.ltp_data if ws_manager else {}
-                    trade_manager.emergency_square_off(ltp_dict, get_live_price_fallback)
+                    await asyncio.to_thread(trade_manager.emergency_square_off, ltp_dict, get_live_price_fallback)
                     await asyncio.to_thread(broker.square_off_all)
 
                     # Telegram: daily summary
@@ -1845,7 +1846,7 @@ async def trading_loop():
     # Sync status to Firestore when the loop exits
     await asyncio.to_thread(sync_status_to_db)
 
-        # ---------------------------------------------------------------------------
+
 
 def sync_status_to_db():
     status = {
