@@ -136,11 +136,11 @@ class AdvancedBacktestEngine:
                 trades_today = 0
                 last_date = current_date
             
-            # Check for intraday auto-squareoff (3:15 PM IST)
+            # Check for intraday auto-squareoff (3:10 PM IST to match live system)
             is_squareoff_time = False
             try:
                 dt = pd.to_datetime(current_time)
-                if dt.hour > 15 or (dt.hour == 15 and dt.minute >= 15):
+                if dt.hour > 15 or (dt.hour == 15 and dt.minute >= 10):
                     is_squareoff_time = True
             except:
                 pass
