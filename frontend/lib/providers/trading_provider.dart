@@ -533,9 +533,9 @@ class TradingProvider with ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>?> smartScreener(double maxPrice) async {
+  Future<Map<String, dynamic>?> smartScreener(double minPrice, double maxPrice) async {
     try {
-      return await _apiService.smartScreener(maxPrice);
+      return await _apiService.smartScreener(minPrice, maxPrice);
     } catch (_) {
       return null;
     }

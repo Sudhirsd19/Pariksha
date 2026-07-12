@@ -1198,7 +1198,7 @@ async def scan_stock_signals(symbol: str):
     }
 
 @app.get("/api/scanner/bulk-scan")
-async def bulk_scan_signals(max_price: float = 3000.0):
+async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
     """
     Runs the Auto-Router Engine across the entire SCREENER_UNIVERSE 
     and returns only the stocks that have actionable signals today and are below max_price.
@@ -1254,7 +1254,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 for sym in SCREENER_UNIVERSE:
                     try:
                         val = close_row.get(f"{sym}.NS")
-                        if val is not None and str(val) != 'nan' and float(val) <= max_price:
+                        if val is not None and str(val) != 'nan' and min_price <= float(val) <= max_price:
                             affordable_symbols.append(sym)
                     except Exception:
                         pass
@@ -1352,7 +1352,7 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 # Fetch LTP from the most recent candle
                 ltp = df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1]
                 
-                if ltp <= max_price:
+                if min_price <= ltp <= max_price:
                     # Only show high-conviction stocks with score >= 70 in screener
                     if strict_result.get("strict_score", 0) >= 70:
                         active_trades.append({

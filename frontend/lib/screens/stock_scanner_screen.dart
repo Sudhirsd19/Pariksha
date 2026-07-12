@@ -1736,14 +1736,16 @@ class _SmartScreenerCard extends StatefulWidget {
 }
 
 class _SmartScreenerCardState extends State<_SmartScreenerCard> {
-  double _selectedPrice = 500;
+  double _minPrice = 0;
+  double _maxPrice = 500;
   bool _isScanning = false;
   List<Map<String, dynamic>> _results = [];
   int _scanned = 0;
   bool _hasScanned = false;
   String? _error;
 
-  final List<double> _priceLimits = [200, 500, 1000, 1500, 3000];
+  final List<double> _minLimits = [0, 100, 200, 500, 1000];
+  final List<double> _maxLimits = [200, 500, 1000, 1500, 3000];
 
   Future<void> _runScan() async {
     setState(() {
@@ -1754,7 +1756,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
     });
     try {
       final provider = Provider.of<TradingProvider>(context, listen: false);
-      final res = await provider.smartScreener(_selectedPrice);
+      final res = await provider.smartScreener(_minPrice, _maxPrice);
       if (res != null && res['status'] == 'success') {
         setState(() {
           _results = List<Map<String, dynamic>>.from(
@@ -1818,7 +1820,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     ),
                   ),
                   Text(
-                    "Price < ₹${_selectedPrice.toInt()}",
+                    "Price Range: ₹${_minPrice.toInt()} - ₹${_maxPrice.toInt()}",
                     style: const TextStyle(color: Colors.white38, fontSize: 10),
                   ),
                 ],
@@ -1827,24 +1829,29 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
           ),
           const SizedBox(height: 18),
 
-          // Price Filter Label
+          // Price Filter Label (Min Price)
           const Text(
-            "PRICE LIMIT",
+            "FROM (MIN PRICE)",
             style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2),
           ),
           const SizedBox(height: 10),
 
-          // Price Filter Chips
+          // Min Price Chips
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _priceLimits.map((price) {
-              final selected = _selectedPrice == price;
+            children: _minLimits.map((price) {
+              final selected = _minPrice == price;
               return GestureDetector(
-                onTap: () => setState(() => _selectedPrice = price),
+                onTap: () => setState(() {
+                  _minPrice = price;
+                  if (_minPrice >= _maxPrice) {
+                    _maxPrice = _minPrice + 500;
+                  }
+                }),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected
                         ? Colors.deepPurpleAccent.withValues(alpha: 0.25)
@@ -1858,7 +1865,56 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     ),
                   ),
                   child: Text(
-                    "< ₹${price.toInt()}",
+                    "₹${price.toInt()}",
+                    style: TextStyle(
+                      color: selected ? Colors.deepPurpleAccent : Colors.white54,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 18),
+
+          // Price Filter Label (Max Price)
+          const Text(
+            "TO (MAX PRICE)",
+            style: TextStyle(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2),
+          ),
+          const SizedBox(height: 10),
+
+          // Max Price Chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _maxLimits.map((price) {
+              final selected = _maxPrice == price;
+              return GestureDetector(
+                onTap: () => setState(() {
+                  _maxPrice = price;
+                  if (_maxPrice <= _minPrice) {
+                    _minPrice = _maxPrice >= 500 ? _maxPrice - 500 : 0;
+                  }
+                }),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Colors.deepPurpleAccent.withValues(alpha: 0.25)
+                        : Colors.white.withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: selected
+                          ? Colors.deepPurpleAccent.withValues(alpha: 0.6)
+                          : Colors.white.withValues(alpha: 0.07),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    "₹${price.toInt()}",
                     style: TextStyle(
                       color: selected ? Colors.deepPurpleAccent : Colors.white54,
                       fontWeight: FontWeight.bold,
@@ -1984,7 +2040,7 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                     const Icon(Icons.search_off_rounded, color: Colors.white24, size: 32),
                     const SizedBox(height: 8),
                     Text(
-                      "Koi stock nahi mila under ₹${_selectedPrice.toInt()}",
+                      "Koi stock nahi mila range mein (₹${_minPrice.toInt()} - ₹${_maxPrice.toInt()})",
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white38, fontSize: 12),
                     ),
