@@ -1353,7 +1353,8 @@ async def bulk_scan_signals(max_price: float = 3000.0):
                 ltp = df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1]
                 
                 if ltp <= max_price:
-                    if strict_result.get("strict_signal") != "NONE":
+                    # Only show high-conviction stocks with score >= 70 in screener
+                    if strict_result.get("strict_score", 0) >= 70:
                         active_trades.append({
                             "status": "success",
                             "symbol": base_symbol,
