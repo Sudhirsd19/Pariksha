@@ -442,6 +442,87 @@ async def ltp_broadcaster():
                 dt_time(9, 15) <= now_ist.time() <= dt_time(15, 30)  # 9:15 AM to 3:30 PM IST
             )
             if is_market_open:
+                # --- TRAILING SL + TIME EXIT WIRING (from ExecutionEngine) ---
+                from backend.engines.execution_engine import ExecutionEngine
+                if not hasattr(ltp_broadcaster, '_exec_engines'):
+                    ltp_broadcaster._exec_engines = {}  # trade_token -> ExecutionEngine instance
+
+                with trade_manager._lock:
+                    for t in trade_manager.active_trades:
+                        tok = t.get("token")
+                        if not tok or tok not in current_ltps:
+                            continue
+
+                        live_price = current_ltps[tok]
+                        trade_side = t.get("original_signal", t.get("signal", "BUY"))
+                        atr_val = t.get("atr", 0)
+
+                        # Initialize execution engine for this trade if not exists
+                        if tok not in ltp_broadcaster._exec_engines:
+                            eng = ExecutionEngine()
+                            eng.entry_time = t.get("timestamp", time.time() * 1000) / 1000
+                            ltp_broadcaster._exec_engines[tok] = eng
+
+                        eng = ltp_broadcaster._exec_engines[tok]
+
+                        entry_price = t.get("actual_entry", t.get("entry", 0))
+
+                        # Partial Profit Booking (50% close at 1:1 RR equivalent 1.0% target)
+                        if entry_price > 0 and eng.check_partial_profit(live_price, entry_price, trade_side):
+                            original_qty = t.get("qty", 0)
+                            partial_qty = original_qty // 2
+                            if partial_qty > 0:
+                                print(f"[PartialClose] Triggered 50% profit booking for {t.get('symbol')} at {live_price}")
+                                t["qty"] = original_qty - partial_qty
+                                opp_side_order = "SELL" if t.get("instrument_type") == "OPTIONS" else ("SELL" if trade_side == "BUY" else "BUY")
+                                if not is_paper_trading:
+                                    try:
+                                        time.sleep(0.4)
+                                        broker.place_order(t.get("symbol"), t.get("token"), partial_qty, opp_side_order, live_price)
+                                    except Exception as p_err:
+                                        print(f"[PartialClose Error] Failed to place order: {p_err}")
+                                send_push_notification(f"💰 PARTIAL CLOSE: {t.get('symbol')}", f"Booked 50% profit at {live_price}")
+
+                        # Score-Decay Exit (reversal guard)
+                        current_score = t.get("current_score", 0)
+                        entry_score = t.get("strict_score", 0)
+                        if current_score > 0 and eng.check_score_decay_exit(current_score, entry_score):
+                            t["sl"] = live_price  # Force exit
+                            print(f"[ScoreDecayExit] {t.get('symbol')} score dropped from {entry_score} to {current_score} — forcing exit")
+
+                        # Update trailing SL if ATR is available
+                        if atr_val and atr_val > 0:
+                            phase = "EXPANSION" if t.get("volume_spike", False) else "NORMAL"
+                            new_sl = eng.update_trailing_sl(live_price, atr_val, trade_side, phase)
+                            if new_sl:
+                                current_sl = t.get("sl", 0)
+                                # Only tighten SL (move in favorable direction)
+                                if trade_side == "BUY" and new_sl > current_sl:
+                                    t["sl"] = round(new_sl, 2)
+                                elif trade_side == "SELL" and (current_sl == 0 or new_sl < current_sl):
+                                    t["sl"] = round(new_sl, 2)
+
+                        # Time-based exit: close if held > 25 min without momentum
+                        if eng.check_time_exit():
+                            if entry_price > 0:
+                                pnl_pct = (live_price - entry_price) / entry_price * 100
+                                if trade_side == "SELL":
+                                    pnl_pct = -pnl_pct
+                                # Only time-exit if trade is flat or negative
+                                if pnl_pct < 0.5:
+                                    t["sl"] = live_price  # Force SL hit on next monitor cycle
+                                    print(f"[TimeExit] {t.get('symbol')} held >{eng.max_hold_time_mins}min with {pnl_pct:.2f}% PnL — forcing exit")
+
+                # Clean up execution engines for closed trades
+                active_tokens = set()
+                with trade_manager._lock:
+                    for t in trade_manager.active_trades:
+                        if t.get("token"):
+                            active_tokens.add(t["token"])
+                for old_tok in list(ltp_broadcaster._exec_engines.keys()):
+                    if old_tok not in active_tokens:
+                        del ltp_broadcaster._exec_engines[old_tok]
+
                 # Fix M-5: Throttle monitor_trades DB writes to 1Hz
                 now_ts = time.time()
                 if not hasattr(ltp_broadcaster, '_last_monitor'):
@@ -639,7 +720,7 @@ async def get_analytics():
 def get_pnl_history():
     return trade_manager.pnl_history
 
-# Fix BE-4: Added /backtest endpoint
+# Legacy /backtest endpoint (kept for compatibility)
 @app.post("/backtest")
 async def run_backtest_endpoint(days: int = 30):
     from backend.analytics.analytics_engine import AnalyticsEngine
@@ -653,6 +734,24 @@ async def run_backtest_endpoint(days: int = 30):
         if row.get('status') == 'CLOSED' and row.get('entry') and row.get('exit_price'):
             bt.execute_trade(row['entry'], row['exit_price'], row.get('qty', 50), row.get('signal', 'BUY'))
     return bt.get_metrics()
+
+@app.post("/api/backtest/run")
+async def run_equity_backtest_api(symbol: str, days: int = 60, capital: float = 100000.0, min_score: int = 60):
+    """
+    Full walk-forward equity backtest using the Strict Checklist Engine.
+    Fetches 5-min OHLCV via yfinance, simulates SL/TP hits, applies real AngelOne charges.
+    
+    - symbol: NSE equity symbol (e.g. RELIANCE, TCS, SBIN)
+    - days: Calendar days of history (30/60/90/180)
+    - capital: Initial capital in INR (default 1 Lakh)
+    - min_score: Minimum Whale Score to enter a trade (default 60/100)
+    """
+    from backend.backtesting.backtest_runner import run_equity_backtest
+    try:
+        result = await asyncio.to_thread(run_equity_backtest, symbol, days, capital, min_score)
+        return result
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
     
 @app.get("/pnl")
 async def get_pnl():
@@ -1674,6 +1773,62 @@ async def trading_loop():
 
                 # Active signal engine computes ATR and EMA 50 on the fly; redundant indicator calculations are removed for performance.
                 
+                # ================================================================
+                # PHASE 2 WIRING: Apply indicators + run ALL engines
+                # ================================================================
+                
+                # Step 1: Apply technical indicators to each timeframe
+                for tf_df in [df_1m, df_5m, df_15m, df_1h]:
+                    try:
+                        TechnicalIndicators.apply_all(tf_df)
+                    except Exception:
+                        pass
+
+                # Step 2: Multi-Timeframe Analysis (HTF = Direction, LTF = Entry)
+                from backend.engines.mtf_engine import mtf_engine
+                mtf_result = mtf_engine.analyze(df_1m, df_5m, df_15m, df_1h)
+                htf_trend = mtf_result.get('htf_trend', 'Neutral')
+                ltf_entry_valid = mtf_result.get('ltf_entry_valid', False)
+
+                # Step 3: Structure Analysis (BOS, CHoCH, FVG, MSS, Breakout, Pullback)
+                from backend.engines.structure_engine import StructureEngine
+                structure_engine = StructureEngine(lookback=20)
+                structure_result = structure_engine.analyze(df_5m)
+
+                # Step 4: Liquidity Analysis (EQH/EQL, Sweeps)
+                from backend.engines.liquidity_engine import LiquidityEngine
+                liquidity_engine = LiquidityEngine()
+                liquidity_result = liquidity_engine.analyze(df_5m)
+
+                # Step 5: Trend Confirmation (EMA + Supertrend + ADX scoring)
+                from backend.engines.trend_engine import TrendEngine
+                trend_engine = TrendEngine()
+                trend_direction = trend_engine.analyze(df_5m)
+
+                # Step 6: Volume Confirmation (Spike + VWAP bias)
+                from backend.engines.volume_engine import VolumeEngine
+                volume_engine = VolumeEngine()
+                volume_result = volume_engine.analyze(df_5m)
+
+                # Step 7: Momentum Check (RSI strength)
+                from backend.engines.momentum_engine import MomentumEngine
+                momentum_engine = MomentumEngine()
+                momentum_result = momentum_engine.analyze(df_5m)
+
+                # Step 8: Candlestick Patterns (Engulfing, Doji, Hammer)
+                from backend.engines.candlestick_engine import candlestick_engine
+                candle_result = candlestick_engine.analyze(df_5m)
+
+                # Log structure analysis for debugging
+                if structure_result.get('choch_bullish') or structure_result.get('choch_bearish'):
+                    choch_dir = "Bullish" if structure_result['choch_bullish'] else "Bearish"
+                    print(f"[SMC] CHoCH detected: {choch_dir} for {symbol}")
+                if structure_result.get('mss_bullish') or structure_result.get('mss_bearish'):
+                    mss_dir = "Bullish" if structure_result['mss_bullish'] else "Bearish"
+                    print(f"[SMC] MSS confirmed: {mss_dir} for {symbol}")
+                if structure_result.get('fake_breakout_up') or structure_result.get('fake_breakout_down'):
+                    print(f"[SMC] FAKE BREAKOUT detected for {symbol} — avoiding entry")
+                
                 # Fetch Real-time LTP to avoid stale entry prices from 1m historical candles
                 real_ltp = None
                 try:
@@ -1694,12 +1849,54 @@ async def trading_loop():
                     except Exception as e:
                         print(f"[Loop] Failed to fetch market depth for {symbol}: {e}")
 
+                # Step 9: Scorecard (100-point confluence-based checklist — primary signal)
                 signal_data = strict_checklist_engine.evaluate(
                     symbol, 
                     df_5m, 
-                    is_nifty_bullish=True,
-                    market_depth_buyer_ratio=market_depth_buyer_ratio
+                    is_nifty_bullish=(htf_trend != "Bearish"),
+                    market_depth_buyer_ratio=market_depth_buyer_ratio,
+                    structure_result=structure_result,
+                    candle_result=candle_result,
+                    mtf_result=mtf_result,
+                    volume_result=volume_result,
+                    momentum_result=momentum_result,
+                    trend_direction=trend_direction
                 )
+                
+                # Enrich signal_data with all engine results
+                signal_data['htf_trend'] = htf_trend
+                signal_data['ltf_entry_valid'] = ltf_entry_valid
+                signal_data['mtf_alignment'] = mtf_result.get('alignment_score', 0)
+                signal_data['trend_direction'] = trend_direction
+                signal_data['volume_strength'] = volume_result.get('strength', 'Weak')
+                signal_data['volume_spike'] = volume_result.get('volume_spike', False)
+                signal_data['vwap_status'] = volume_result.get('vwap_status', 'Unknown')
+                signal_data['rsi'] = momentum_result.get('rsi', 50)
+                signal_data['momentum_strength'] = momentum_result.get('strength', 'Neutral')
+                signal_data['bos'] = structure_result.get('bos', 'None')
+                signal_data['choch_bullish'] = structure_result.get('choch_bullish', False)
+                signal_data['choch_bearish'] = structure_result.get('choch_bearish', False)
+                signal_data['mss_bullish'] = structure_result.get('mss_bullish', False)
+                signal_data['mss_bearish'] = structure_result.get('mss_bearish', False)
+                signal_data['fvg_gap'] = structure_result.get('fvg_gap', False)
+                signal_data['bullish_fvg'] = structure_result.get('bullish_fvg', False)
+                signal_data['bearish_fvg'] = structure_result.get('bearish_fvg', False)
+                signal_data['sweep'] = liquidity_result.get('sweep', None)
+                signal_data['breakout_bullish'] = structure_result.get('breakout_bullish', False)
+                signal_data['breakout_bearish'] = structure_result.get('breakout_bearish', False)
+                signal_data['fake_breakout_up'] = structure_result.get('fake_breakout_up', False)
+                signal_data['fake_breakout_down'] = structure_result.get('fake_breakout_down', False)
+                signal_data['pullback_to_support'] = structure_result.get('pullback_to_support', False)
+                signal_data['pullback_to_resistance'] = structure_result.get('pullback_to_resistance', False)
+                signal_data['candlestick'] = candle_result
+                signal_data['confluence_count'] = signal_data.get('confluence_count', 0)
+
+                # Update current score for any active trade of this symbol
+                with trade_manager._lock:
+                    for t in trade_manager.active_trades:
+                        if t.get("symbol", "").startswith(symbol):
+                            t["current_score"] = signal_data['strict_score']
+
                 raw_side = signal_data.get('strict_signal', 'NONE')
                 if "BUY" in raw_side:
                     side = "BUY"
@@ -1707,6 +1904,69 @@ async def trading_loop():
                     side = "SELL"
                 else:
                     side = "NONE"
+
+                # ================================================================
+                # SMART FILTERS: Use SMC + MTF to reject weak signals
+                # ================================================================
+                
+                # Filter 1: HTF/LTF alignment — skip if LTF doesn't confirm HTF direction
+                if side != "NONE" and not ltf_entry_valid:
+                    print(f"[MTF Filter] {symbol} {side} blocked: LTF not aligned with HTF ({htf_trend})")
+                    continue
+                
+                # Filter 2: HTF trend vs trade direction mismatch
+                if side == "BUY" and htf_trend == "Bearish":
+                    print(f"[MTF Filter] {symbol} BUY blocked: HTF trend is Bearish")
+                    continue
+                if side == "SELL" and htf_trend == "Bullish":
+                    print(f"[MTF Filter] {symbol} SELL blocked: HTF trend is Bullish")
+                    continue
+
+                # Filter 3: Fake breakout trap — do NOT enter if fake breakout detected
+                if side == "BUY" and structure_result.get('fake_breakout_up', False):
+                    print(f"[SMC Filter] {symbol} BUY blocked: Fake breakout UP detected (trap)")
+                    continue
+                if side == "SELL" and structure_result.get('fake_breakout_down', False):
+                    print(f"[SMC Filter] {symbol} SELL blocked: Fake breakout DOWN detected (trap)")
+                    continue
+
+                # Filter 4: CONFLUENCE MINIMUM — require 3+ independent confluences
+                confluence_count = signal_data.get('confluence_count', 0)
+                if side != "NONE" and confluence_count < 3:
+                    print(f"[Confluence Filter] {symbol} {side} blocked: Only {confluence_count}/3 confluences (need 3+)")
+                    continue
+
+                # Filter 5: SESSION-AWARE DYNAMIC THRESHOLDS
+                current_score = signal_data.get('strict_score', 0)
+                now_time = now.hour * 100 + now.minute
+                if 920 <= now_time <= 945:
+                    # Opening drive: require STRONG signal (80+) due to high volatility
+                    session_threshold = 80
+                elif 1130 <= now_time <= 1300:
+                    # Lunch chop: require very high conviction (85+) to avoid noise
+                    session_threshold = 85
+                else:
+                    # Normal sessions: standard threshold (70+)
+                    session_threshold = 70
+                
+                if side != "NONE" and current_score < session_threshold:
+                    print(f"[Session Filter] {symbol} {side} blocked: Score {current_score} < session threshold {session_threshold}")
+                    continue
+
+                # Filter 6: MANDATORY SMC STRUCTURE — score must be > 0 (requires BOS/CHoCH/MSS)
+                smc_score = signal_data.get('breakdown', {}).get('SMC Structure', 0)
+                if side != "NONE" and smc_score <= 0:
+                    print(f"[SMC Structure Filter] {symbol} {side} blocked: SMC Structure score is {smc_score} (needs BOS/CHoCH/MSS)")
+                    continue
+
+                # Filter 7: MANDATORY VWAP ALIGNMENT — price must be on the correct side of VWAP
+                vwap_status = signal_data.get('vwap_status', 'Unknown')
+                if side == "BUY" and vwap_status == "Below":
+                    print(f"[VWAP Filter] {symbol} BUY blocked: Price is below VWAP")
+                    continue
+                if side == "SELL" and vwap_status == "Above":
+                    print(f"[VWAP Filter] {symbol} SELL blocked: Price is above VWAP")
+                    continue
 
                 # --- CORRELATION GUARD (Nifty vs BankNifty) ---
                 # (Replaced by strict_checklist_engine internal checks)
@@ -1720,6 +1980,13 @@ async def trading_loop():
                 if side in ["BUY", "SELL"] and risk_manager.can_trade(side):
                     # Old stock_analyzer scorecard validation has been deprecated and removed.
                     # The strict_checklist_engine now holds full authority.
+
+                    # BUG-2 FIX: OI Filter — use the PCR + Max Pain data that was already being fetched
+                    from backend.engines.oi_engine import oi_engine
+                    current_ltp_for_oi = real_ltp or float(df_5m['close'].iloc[-1])
+                    if not oi_engine.is_oi_supportive(symbol, side, current_ltp_for_oi):
+                        print(f"[OI Filter] Trade REJECTED by OI analysis for {symbol} {side} (PCR/MaxPain guard)")
+                        continue
 
                     # FIX 2: CooldownEngine check — prevents trades within 10 min window
                     if not cooldown_engine.can_trade():
@@ -1800,7 +2067,7 @@ async def trading_loop():
                             'tp': premium_tp,
                         })
                     else:
-                        qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol)
+                        qty = risk_manager.calculate_position_size(signal_data['entry'], signal_data['sl'], symbol, signal_data.get('atr', 0.0))
                         # FIX BUG-4: Validate qty before proceeding — zero qty would send invalid order
                         if qty <= 0:
                             print(f"[SizingError] Calculated qty=0 for {symbol} (entry={signal_data['entry']}, sl={signal_data['sl']}). Skipping trade.")

@@ -17,6 +17,29 @@ class ApiService {
 
   static Future<void> init() async {
     if (kDebugMode) {
+      // 1. Try localhost (for web/desktop)
+      try {
+        final uri = Uri.parse("http://localhost:8000/status");
+        final response = await http.get(uri).timeout(const Duration(milliseconds: 500));
+        if (response.statusCode == 200) {
+          _resolvedBaseUrl = "http://localhost:8000";
+          debugPrint("[ApiService] Detected local backend at $_resolvedBaseUrl");
+          return;
+        }
+      } catch (_) {}
+
+      // 2. Try 127.0.0.1
+      try {
+        final uri = Uri.parse("http://127.0.0.1:8000/status");
+        final response = await http.get(uri).timeout(const Duration(milliseconds: 500));
+        if (response.statusCode == 200) {
+          _resolvedBaseUrl = "http://127.0.0.1:8000";
+          debugPrint("[ApiService] Detected local backend at $_resolvedBaseUrl");
+          return;
+        }
+      } catch (_) {}
+
+      // 3. Try emulator host (for Android)
       try {
         final uri = Uri.parse("http://10.0.2.2:8000/status");
         final response = await http.get(uri).timeout(const Duration(milliseconds: 500));
@@ -25,9 +48,7 @@ class ApiService {
           debugPrint("[ApiService] Detected local emulator backend at $_resolvedBaseUrl");
           return;
         }
-      } catch (e) {
-        debugPrint("[ApiService] Local emulator backend not reachable. Falling back to production Railway URL. Error: $e");
-      }
+      } catch (_) {}
     }
     _resolvedBaseUrl = "https://pariksha-backend-lar4.onrender.com";
     debugPrint("[ApiService] Using production backend at $_resolvedBaseUrl");

@@ -815,6 +815,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     final key = (data['strict_breakdown'] as Map).keys.elementAt(idx);
                     final value = (data['strict_breakdown'] as Map)[key];
                     // Define max points per category
+                    final hasNewSMC = (data['strict_breakdown'] as Map).containsKey("SMC Structure");
                     int maxPts = 0;
                     if (key == "Macro Trend") {
                       maxPts = 15;
@@ -825,9 +826,19 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                     } else if (key == "Volume") {
                       maxPts = 20;
                     } else if (key == "Momentum") {
-                      maxPts = 15;
+                      maxPts = hasNewSMC ? 20 : 15;
                     } else if (key == "Risk & Execution") {
                       maxPts = 15;
+                    } else if (key == "SMC Structure") {
+                      maxPts = 25;
+                    } else if (key == "Trend & MTF") {
+                      maxPts = 20;
+                    } else if (key == "Volume & VWAP") {
+                      maxPts = 20;
+                    } else if (key == "Candlestick") {
+                      maxPts = 10;
+                    } else if (key == "Risk Quality") {
+                      maxPts = 5;
                     }
 
                     final double pct = maxPts > 0 ? ((value as num).toDouble() / maxPts) : 0;

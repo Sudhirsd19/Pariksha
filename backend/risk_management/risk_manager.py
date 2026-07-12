@@ -133,13 +133,22 @@ class RiskManager:
             
         return True
 
-    def calculate_position_size(self, entry, sl, symbol="NIFTY"):
+    def calculate_position_size(self, entry, sl, symbol="NIFTY", atr=0.0):
         risk_per_share = abs(entry - sl)
         if risk_per_share == 0:
             return 0
 
         # Use dynamic risk_per_trade_pct if set from Firebase, else fallback to config
         risk_pct = getattr(self, 'risk_per_trade_pct', config.RISK_PER_TRADE)
+        
+        # Volatility Adjustment: Scale down risk on highly volatile days
+        if atr and atr > 0 and entry > 0:
+            vol_ratio = (atr / entry) * 100
+            if vol_ratio > 1.5:  # Highly volatile (ATR is >1.5% of price)
+                old_pct = risk_pct
+                risk_pct = risk_pct * 0.5
+                print(f"[RiskManager] Volatility High ({vol_ratio:.2f}%). Scaling risk down: {old_pct*100:.2f}% -> {risk_pct*100:.2f}%")
+        
         total_risk = self.capital * risk_pct
         
         raw_quantity = int(total_risk / risk_per_share)

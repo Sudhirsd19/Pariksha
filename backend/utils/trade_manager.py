@@ -6,7 +6,7 @@ import threading
 # Telegram Alerts — imported lazily inside methods to avoid circular imports
 try:
     from backend.utils.telegram_notifier import (
-        notify_trade_entry, notify_trade_exit, notify_sl_moved_to_breakeven
+        notify_trade_entry, notify_trade_exit, notify_sl_moved_to_breakeven, _send
     )
     _TG_AVAILABLE = True
 except Exception:
@@ -140,7 +140,8 @@ class TradeManager:
             "underlying_token": signal_data.get("underlying_token"),
             "underlying_entry": signal_data.get("underlying_entry"),
             "underlying_sl": signal_data.get("underlying_sl"),
-            "underlying_tp": signal_data.get("underlying_tp")
+            "underlying_tp": signal_data.get("underlying_tp"),
+            "target_stage": 1
         }
         with self._lock:
             self.active_trades.append(trade)
@@ -333,6 +334,81 @@ class TradeManager:
                         elif current_ltp >= trade["sl"]:
                             hit_sl = True
                             exit_price = current_ltp
+
+                if hit_tp:
+                    stage = trade.get("target_stage", 1)
+                    if stage == 1:
+                        trade["target_stage"] = 2
+                        
+                        if is_options:
+                            underlying_entry = trade.get("underlying_entry", trade["entry"])
+                            underlying_sl = trade.get("underlying_sl", trade["sl"])
+                            underlying_tp = trade.get("underlying_tp", trade["tp"])
+                            risk_dist = abs(underlying_entry - underlying_sl)
+                            
+                            trade["underlying_sl"] = underlying_tp
+                            trade["sl"] = current_ltp
+                            
+                            new_underlying_tp = underlying_tp + risk_dist
+                            if original_signal == "BUY":
+                                trade["underlying_tp"] = round(new_underlying_tp, 2)
+                            else:
+                                trade["underlying_tp"] = round(underlying_tp - risk_dist, 2)
+                                
+                            trade["tp"] = round(current_ltp + (risk_dist * 0.45), 2)
+                        else:
+                            entry = trade["entry"]
+                            sl = trade["sl"]
+                            tp = trade["tp"]
+                            risk_dist = abs(entry - sl)
+                            
+                            trade["sl"] = tp
+                            
+                            if trade["signal"] == "BUY":
+                                trade["tp"] = round(tp + risk_dist, 2)
+                            else:
+                                trade["tp"] = round(tp - risk_dist, 2)
+                                
+                        persistence_manager.save_trade(trade)
+                        db_manager.update_trade(trade["id"], {
+                            "sl": trade["sl"],
+                            "tp": trade["tp"],
+                            "underlying_sl": trade.get("underlying_sl"),
+                            "underlying_tp": trade.get("underlying_tp"),
+                            "target_stage": 2
+                        })
+                        
+                        # Log to local SQLite event logs for the frontend logs screen
+                        persistence_manager.log_event(
+                            "INFO",
+                            "TARGET_EXTENSION",
+                            f"Target 1 Hit for {trade['symbol']}. SL locked at {trade['sl']}, extended TP to {trade['tp']}"
+                        )
+                        
+                        msg = f"🎯 TARGET 1 HIT for {trade['symbol']}!\n" \
+                              f"• Profit locked at: {trade['sl']}\n" \
+                              f"• Naya Target (TP2): {trade['tp']}"
+                        print(f"[TargetExtension] {msg}")
+                        if _TG_AVAILABLE:
+                            try:
+                                _send(msg)
+                            except Exception as tg_err:
+                                print(f"Telegram error: {tg_err}")
+                        
+                        try:
+                            from firebase_admin import messaging
+                            message = messaging.Message(
+                                notification=messaging.Notification(
+                                    title=f"🎯 Target 1 Hit: {trade['symbol']}",
+                                    body=f"Locked SL at {trade['sl']}, extended TP to {trade['tp']}",
+                                ),
+                                topic='trading_alerts',
+                            )
+                            messaging.send(message)
+                        except Exception as fcm_err:
+                            print(f"FCM error: {fcm_err}")
+                            
+                        hit_tp = False
 
                 if hit_tp or hit_sl:
                     # Calculate PnL

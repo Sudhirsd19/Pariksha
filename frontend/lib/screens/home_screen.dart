@@ -5,6 +5,7 @@ import 'pnl_screen.dart';
 import 'logs_screen.dart';
 import 'analytics_screen.dart';
 import 'settings_screen.dart';
+import 'backtest_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +21,7 @@ class _HomeScreenState extends State<HomeScreen> {
     const DashboardScreen(),
     const PnLScreen(),
     const LogsScreen(),
+    const BacktestScreen(),
     const AnalyticsScreen(),
     const SettingsScreen(),
   ];
@@ -28,7 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF040408),
-      extendBody: true, // Crucial for floating glass nav bar
+      extendBody: true,
       body: IndexedStack(
         index: _selectedIndex,
         children: _screens,
@@ -65,8 +67,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildNavItem(Icons.grid_view_rounded, 'CORE', 0),
                 _buildNavItem(Icons.analytics_outlined, 'RESULTS', 1),
                 _buildNavItem(Icons.terminal_rounded, 'LOGS', 2),
-                _buildNavItem(Icons.radar_rounded, 'HUB', 3),
-                _buildNavItem(Icons.settings_input_component_rounded, 'PROTOCOLS', 4),
+                _buildNavItem(Icons.history_edu_rounded, 'BACKTEST', 3),
+                _buildNavItem(Icons.radar_rounded, 'HUB', 4),
+                _buildNavItem(Icons.settings_input_component_rounded, 'PROTOCOLS', 5),
               ],
             ),
           ),
@@ -80,12 +83,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return BottomNavigationBarItem(
       icon: Container(
         margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected ? Colors.cyanAccent.withValues(alpha: 0.05) : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Icon(icon, size: 22),
+        child: Icon(icon, size: 20),
       ),
       label: label,
     );
