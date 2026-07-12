@@ -158,6 +158,8 @@ class AdvancedBacktestEngine:
                     open_trade = None
                     continue
 
+                self._update_trailing_sl(open_trade, current_price)
+
                 exit_signal = self._check_exit_conditions(
                     open_trade, current_high, current_low, current_price, current_time
                 )
@@ -238,6 +240,43 @@ class AdvancedBacktestEngine:
         
         return self._generate_comprehensive_report()
     
+    def _update_trailing_sl(self, trade, current_price):
+        """Implement the exact trailing stop-loss and break-even logic from trade_manager.py"""
+        entry = trade['entry_price']
+        sl = trade['sl']
+        tp = trade['tp']
+        atr = trade.get('atr', 0)
+        
+        if trade['type'] == 'BUY':
+            tp_distance = tp - entry
+            current_profit = current_price - entry
+            
+            # Step 1: Move SL to exact break-even at 50% target progress (1:1 RR)
+            if current_profit >= (tp_distance * 0.5) and sl < entry:
+                trade['sl'] = entry
+                
+            # Step 2: Trail SL at 70% target progress
+            if current_profit >= (tp_distance * 0.7):
+                atr_trail = atr if atr > 0 else (tp_distance * 0.3)
+                new_sl = current_price - (atr_trail * 0.5)
+                if new_sl > trade['sl']:
+                    trade['sl'] = round(new_sl, 2)
+                    
+        elif trade['type'] == 'SELL':
+            tp_distance = entry - tp
+            current_profit = entry - current_price
+            
+            # Step 1: Move SL to exact break-even at 50% target progress (1:1 RR)
+            if current_profit >= (tp_distance * 0.5) and sl > entry:
+                trade['sl'] = entry
+                
+            # Step 2: Trail SL at 70% target progress
+            if current_profit >= (tp_distance * 0.7):
+                atr_trail = atr if atr > 0 else (tp_distance * 0.3)
+                new_sl = current_price + (atr_trail * 0.5)
+                if new_sl < trade['sl']:
+                    trade['sl'] = round(new_sl, 2)
+
     def _calculate_atr(self, df, period=14):
         """Calculate Average True Range"""
         try:
