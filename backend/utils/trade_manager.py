@@ -303,14 +303,14 @@ class TradeManager:
                             if underlying_ltp >= trade.get("underlying_tp", 999999):
                                 hit_tp = True
                                 exit_price = current_ltp
-                            elif underlying_ltp <= trade.get("underlying_sl", 0):
+                            elif underlying_ltp < trade.get("underlying_sl", 0):
                                 hit_sl = True
                                 exit_price = current_ltp
                         elif original_signal == "SELL":
                             if underlying_ltp <= trade.get("underlying_tp", 0):
                                 hit_tp = True
                                 exit_price = current_ltp
-                            elif underlying_ltp >= trade.get("underlying_sl", 999999):
+                            elif underlying_ltp > trade.get("underlying_sl", 999999):
                                 hit_sl = True
                                 exit_price = current_ltp
 
@@ -324,14 +324,14 @@ class TradeManager:
                         if current_ltp >= trade["tp"]:
                             hit_tp = True
                             exit_price = current_ltp
-                        elif current_ltp <= trade["sl"]:
+                        elif current_ltp < trade["sl"]:
                             hit_sl = True
                             exit_price = current_ltp
                     elif trade["signal"] == "SELL":
                         if current_ltp <= trade["tp"]:
                             hit_tp = True
                             exit_price = current_ltp
-                        elif current_ltp >= trade["sl"]:
+                        elif current_ltp > trade["sl"]:
                             hit_sl = True
                             exit_price = current_ltp
 
