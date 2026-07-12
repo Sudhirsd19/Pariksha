@@ -465,6 +465,8 @@ class StrictChecklistEngine:
                 signal = "STRONG BUY"
             elif 70 <= final_score <= 79:
                 signal = "MODERATE BUY"
+            else:
+                signal = "WEAK BUY"
         else:
             final_score = sell_score
             confluences = len(sell_confluences)
@@ -472,6 +474,8 @@ class StrictChecklistEngine:
                 signal = "STRONG SELL"
             elif 70 <= final_score <= 79:
                 signal = "MODERATE SELL"
+            else:
+                signal = "WEAK SELL"
         
         # ==========================================
         # Entry, SL, TP Calculation
