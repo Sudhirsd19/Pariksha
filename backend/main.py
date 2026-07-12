@@ -595,6 +595,10 @@ async def ltp_broadcaster():
 async def root():
     return {"message": "QuantumIndex Backend Running"}
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "message": "QuantumIndex Backend Healthy"}
+
 async def refresh_signals():
     global signals
     try:
@@ -1097,6 +1101,9 @@ async def scan_stock_signals(symbol: str):
     if df is None or df.empty:
         return {"status": "error", "message": "Failed to fetch stock data (broker session expired and yfinance rate-limited)"}
             
+    # Standardize columns to lowercase for engine consistency
+    df.columns = [c.lower() for c in df.columns]
+
     is_nifty_bullish = True
     if nifty_df is not None and not nifty_df.empty:
         from backend.indicators.technical_indicators import TechnicalIndicators
@@ -1179,7 +1186,7 @@ async def scan_stock_signals(symbol: str):
         mtf_result=mtf_result,
         volume_result=volume_result,
         momentum_result=momentum_result,
-        trend_result=trend_result
+        trend_direction=trend_result
     )
     
     # Update global score so it gets broadcast via WebSocket + written to Firestore
@@ -1310,6 +1317,7 @@ async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
                     print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
 
             if df is not None and not df.empty:
+                df.columns = [c.lower() for c in df.columns]
                 market_depth_buyer_ratio = 1.0
                 if token and str(token) in market_depths:
                     depth_info = market_depths[str(token)]
@@ -1346,7 +1354,7 @@ async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
                     candle_result=candle_result,
                     volume_result=volume_result,
                     momentum_result=momentum_result,
-                    trend_result=trend_result
+                    trend_direction=trend_result
                 )
                 
                 # Fetch LTP from the most recent candle

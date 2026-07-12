@@ -75,7 +75,7 @@ def run_engine(engine_class, engine_name, df_original):
     }
 
 def main():
-    symbol = "LT.NS"
+    symbol = "RELIANCE.NS"
     print("="*80)
     print(f" ENGINE COMPARISON RUNNER for {symbol} ".center(80, "="))
     print("="*80)

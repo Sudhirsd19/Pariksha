@@ -194,12 +194,12 @@ def print_results(results, signals):
     
     try:
         print(f"\nCapital: Rs. {float(results['initial_capital']):,.0f}")
-        print(f"Final Equity: Rs. {float(results['final_equity']):,.0f}")
-        print(f"Total P&L: Rs. {float(results['total_pnl']):,.0f}")
-        print(f"Return: {float(results['return']):.2%}")
+        print(f"Final Equity: Rs. {float(results['final_balance']):,.0f}")
+        print(f"Total P&L: Rs. {float(results['net_profit']):,.0f}")
+        print(f"Return: {float(results['net_profit_pct']):.2f}%")
         
         print(f"\nTrades: {int(results['total_trades'])}")
-        print(f"Winning Trades: {int(results['winning_trades'])} ({float(results['win_rate']):.1%})")
+        print(f"Winning Trades: {int(results['winning_trades'])} ({float(results['win_rate']):.1f}%)")
         print(f"Losing Trades: {int(results['losing_trades'])}")
         
         if int(results['winning_trades']) > 0:
@@ -209,7 +209,7 @@ def print_results(results, signals):
         
         print(f"\nProfit Factor: {float(results['profit_factor']):.2f}")
         print(f"Sharpe Ratio: {float(results['sharpe_ratio']):.2f}")
-        print(f"Max Drawdown: {float(results['max_drawdown']):.2%}")
+        print(f"Max Drawdown: {float(results['max_drawdown_pct']):.2f}%")
     except Exception as e:
         print(f"[!] Error printing results: {e}")
         print(results)
@@ -220,23 +220,23 @@ def print_results(results, signals):
     print("="*70)
     
     synthetic_results = {
-        'win_rate': 0.556,
-        'return': 0.0812,
+        'win_rate': 55.6,
+        'return': 8.12,
         'profit_factor': 1.99,
-        'max_drawdown': 0.0307,
+        'max_drawdown': 3.07,
         'sharpe': 5.36
     }
     
     print(f"\nMetric                | Synthetic | Real Data | Status")
     print("-" * 60)
-    print(f"Win Rate              | {synthetic_results['win_rate']:.1%}     | {results['win_rate']:.1%}      | ", end="")
+    print(f"Win Rate              | {synthetic_results['win_rate']:.1f}%     | {results['win_rate']:.1f}%      | ", end="")
     if results['win_rate'] >= synthetic_results['win_rate']:
         print("✅ BETTER/SAME")
     else:
         print("⚠️  LOWER")
     
-    print(f"Return                | {synthetic_results['return']:.2%}    | {results['return']:.2%}     | ", end="")
-    if results['return'] >= synthetic_results['return']:
+    print(f"Return                | {synthetic_results['return']:.2f}%    | {results['net_profit_pct']:.2f}%     | ", end="")
+    if results['net_profit_pct'] >= synthetic_results['return']:
         print("✅ BETTER/SAME")
     else:
         print("⚠️  LOWER")
@@ -247,8 +247,8 @@ def print_results(results, signals):
     else:
         print("⚠️  LOWER")
     
-    print(f"Max Drawdown          | {synthetic_results['max_drawdown']:.2%}     | {results['max_drawdown']:.2%}     | ", end="")
-    if results['max_drawdown'] <= synthetic_results['max_drawdown'] * 1.1:
+    print(f"Max Drawdown          | {synthetic_results['max_drawdown']:.2f}%     | {results['max_drawdown_pct']:.2f}%     | ", end="")
+    if results['max_drawdown_pct'] <= synthetic_results['max_drawdown'] * 1.1:
         print("✅ GOOD")
     else:
         print("⚠️  HIGHER")

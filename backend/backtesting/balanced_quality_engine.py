@@ -89,9 +89,9 @@ class BalancedQualityEngine:
         rs = gain / loss
         df['rsi'] = 100 - (100 / (1 + rs))
         
-        # Support/Resistance
-        df['support'] = df['low'].rolling(20).min()
-        df['resistance'] = df['high'].rolling(20).max()
+        # Support/Resistance (Shifted by 1 to avoid look-ahead bias, 50-period window)
+        df['support'] = df['low'].shift(1).rolling(50).min()
+        df['resistance'] = df['high'].shift(1).rolling(50).max()
     
     def _is_allowed_time(self, timestamp) -> bool:
         """Check trading hours (10-11 AM, 2-3 PM IST)"""

@@ -28,9 +28,9 @@ class AdvancedBacktestEngine:
         self.daily_pnl = {}
         
         # Realistic costs for intraday equity trading (NSE)
-        self.brokerage_pct = 0.0002  # 0.02% (min ₹20)
-        self.brokerage_min = 20
-        self.stt_pct = 0.001  # 0.1% on sell (NSE equity)
+        self.brokerage_pct = 0.0003  # 0.03% (capped at ₹20)
+        self.brokerage_max = 20      # Capped at ₹20 per executed order
+        self.stt_pct = 0.00025  # 0.025% on sell (NSE intraday equity)
         self.gst_pct = 0.18  # 18% GST on brokerage
         
         # Slippage (depends on liquidity - RELIANCE has good liquidity)
@@ -72,8 +72,8 @@ class AdvancedBacktestEngine:
         """Calculate realistic commission (brokerage + STT + GST)"""
         trade_value = price * qty
         
-        # Brokerage
-        brokerage = max(trade_value * self.brokerage_pct, self.brokerage_min)
+        # Brokerage (0.03% or ₹20, whichever is lower)
+        brokerage = min(trade_value * self.brokerage_pct, self.brokerage_max)
         
         # GST on brokerage
         gst = brokerage * self.gst_pct
@@ -136,8 +136,28 @@ class AdvancedBacktestEngine:
                 trades_today = 0
                 last_date = current_date
             
+            # Check for intraday auto-squareoff (3:15 PM IST)
+            is_squareoff_time = False
+            try:
+                dt = pd.to_datetime(current_time)
+                if dt.hour > 15 or (dt.hour == 15 and dt.minute >= 15):
+                    is_squareoff_time = True
+            except:
+                pass
+            
             # ========== MANAGE EXISTING TRADE ==========
             if open_trade:
+                # Force exit if it is end of day (auto-squareoff)
+                if is_squareoff_time:
+                    prev_balance = self.balance
+                    self._close_trade(
+                        open_trade, current_price, current_time, 
+                        "Intraday Auto-Squareoff", current_volume
+                    )
+                    daily_loss += (self.balance - prev_balance)
+                    open_trade = None
+                    continue
+
                 exit_signal = self._check_exit_conditions(
                     open_trade, current_high, current_low, current_price, current_time
                 )
@@ -154,6 +174,10 @@ class AdvancedBacktestEngine:
             
             # ========== LOOK FOR NEW ENTRY ==========
             if not open_trade and trades_today < self.max_open_positions:
+                # Skip opening new trades if we are in squareoff window
+                if is_squareoff_time:
+                    continue
+
                 # Check daily loss limit
                 if daily_loss < -self.initial_capital * self.max_daily_loss_pct:
                     continue  # Skip trading for rest of day

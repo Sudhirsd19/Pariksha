@@ -100,9 +100,9 @@ class UltraHighQualitySignalEngine:
         df['stoch_k'] = 100 * (df['close'] - low_min) / (high_max - low_min)
         df['stoch_d'] = df['stoch_k'].rolling(3).mean()
         
-        # Support/Resistance levels (20-period)
-        df['support'] = df['low'].rolling(20).min()
-        df['resistance'] = df['high'].rolling(20).max()
+        # Support/Resistance levels (Shifted by 1 to avoid look-ahead bias, 50-period window)
+        df['support'] = df['low'].shift(1).rolling(50).min()
+        df['resistance'] = df['high'].shift(1).rolling(50).max()
     
     def _is_allowed_time(self, timestamp) -> bool:
         """
@@ -153,9 +153,19 @@ class UltraHighQualitySignalEngine:
         """Check if RSI is in sweet zone (30-70, not extreme)"""
         return 30 < row['rsi'] < 70
     
-    def _is_stoch_valid(self, row) -> bool:
-        """Check if Stochastic is in middle zone (30-70)"""
-        return 30 < row['stoch_k'] < 70
+    def _is_stoch_bullish(self, idx) -> bool:
+        """Check if Stochastic was recently oversold (< 30)"""
+        if idx < 5:
+            return False
+        recent_stoch = self.df['stoch_k'].iloc[idx-4:idx+1]
+        return (recent_stoch < 30).any()
+        
+    def _is_stoch_bearish(self, idx) -> bool:
+        """Check if Stochastic was recently overbought (> 70)"""
+        if idx < 5:
+            return False
+        recent_stoch = self.df['stoch_k'].iloc[idx-4:idx+1]
+        return (recent_stoch > 70).any()
     
     def _is_at_support_resistance(self, row) -> bool:
         """Check if price is at S/R bounce (within 0.5% of level)"""
@@ -170,8 +180,8 @@ class UltraHighQualitySignalEngine:
         return dist_to_support < 0.5 or dist_to_resistance < 0.5
     
     def _is_volume_spike(self, row) -> bool:
-        """Check if volume is spiked (>= 2.0x MA volume)"""
-        return row['volume'] >= 2.0 * row['vol_ma20']
+        """Check if volume is spiked (>= 1.5x MA volume)"""
+        return row['volume'] >= 1.5 * row['vol_ma20']
     
     def _is_volume_increasing(self, idx) -> bool:
         """Check if volume is increasing (current > previous)"""
@@ -215,7 +225,7 @@ class UltraHighQualitySignalEngine:
         
         # Condition 5: Volume spike
         cond5 = self._is_volume_spike(row)
-        conditions.append(('Volume 2x+', cond5))
+        conditions.append(('Volume 1.5x+', cond5))
         
         # Condition 6: Volume increasing
         cond6 = self._is_volume_increasing(idx)
@@ -226,7 +236,7 @@ class UltraHighQualitySignalEngine:
         conditions.append(('Strong candle', cond7))
         
         # Condition 8: Stochastic valid
-        cond8 = self._is_stoch_valid(row)
+        cond8 = self._is_stoch_bullish(idx)
         conditions.append(('Stochastic valid', cond8))
         
         # All conditions must be true
@@ -276,7 +286,7 @@ class UltraHighQualitySignalEngine:
         
         # Condition 5: Volume spike
         cond5 = self._is_volume_spike(row)
-        conditions.append(('Volume 2x+', cond5))
+        conditions.append(('Volume 1.5x+', cond5))
         
         # Condition 6: Volume increasing
         cond6 = self._is_volume_increasing(idx)
@@ -287,7 +297,7 @@ class UltraHighQualitySignalEngine:
         conditions.append(('Strong candle', cond7))
         
         # Condition 8: Stochastic valid
-        cond8 = self._is_stoch_valid(row)
+        cond8 = self._is_stoch_bearish(idx)
         conditions.append(('Stochastic valid', cond8))
         
         # All conditions must be true
