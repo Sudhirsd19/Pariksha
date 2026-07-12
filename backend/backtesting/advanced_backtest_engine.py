@@ -158,7 +158,7 @@ class AdvancedBacktestEngine:
                     open_trade = None
                     continue
 
-                self._update_trailing_sl(open_trade, current_price)
+                self._update_trailing_sl(open_trade, current_price, current_high, current_low)
 
                 exit_signal = self._check_exit_conditions(
                     open_trade, current_high, current_low, current_price, current_time
@@ -240,8 +240,9 @@ class AdvancedBacktestEngine:
         
         return self._generate_comprehensive_report()
     
-    def _update_trailing_sl(self, trade, current_price):
-        """Implement the exact trailing stop-loss and break-even logic from trade_manager.py"""
+    def _update_trailing_sl(self, trade, current_price, high=None, low=None):
+        """Implement the exact trailing stop-loss and break-even logic from trade_manager.py.
+        Uses candle high/low for more accurate intra-candle progress detection."""
         entry = trade['entry_price']
         sl = trade['sl']
         tp = trade['tp']
@@ -249,7 +250,9 @@ class AdvancedBacktestEngine:
         
         if trade['type'] == 'BUY':
             tp_distance = tp - entry
-            current_profit = current_price - entry
+            # Use candle high for max profit within candle (more realistic)
+            best_price = high if high is not None else current_price
+            current_profit = best_price - entry
             
             # Step 1: Move SL to exact break-even at 50% target progress (1:1 RR)
             if current_profit >= (tp_distance * 0.5) and sl < entry:
@@ -258,13 +261,15 @@ class AdvancedBacktestEngine:
             # Step 2: Trail SL at 70% target progress
             if current_profit >= (tp_distance * 0.7):
                 atr_trail = atr if atr > 0 else (tp_distance * 0.3)
-                new_sl = current_price - (atr_trail * 0.5)
+                new_sl = best_price - (atr_trail * 0.5)
                 if new_sl > trade['sl']:
                     trade['sl'] = round(new_sl, 2)
                     
         elif trade['type'] == 'SELL':
             tp_distance = entry - tp
-            current_profit = entry - current_price
+            # Use candle low for max profit within candle (more realistic)
+            best_price = low if low is not None else current_price
+            current_profit = entry - best_price
             
             # Step 1: Move SL to exact break-even at 50% target progress (1:1 RR)
             if current_profit >= (tp_distance * 0.5) and sl > entry:
@@ -273,7 +278,7 @@ class AdvancedBacktestEngine:
             # Step 2: Trail SL at 70% target progress
             if current_profit >= (tp_distance * 0.7):
                 atr_trail = atr if atr > 0 else (tp_distance * 0.3)
-                new_sl = current_price + (atr_trail * 0.5)
+                new_sl = best_price + (atr_trail * 0.5)
                 if new_sl < trade['sl']:
                     trade['sl'] = round(new_sl, 2)
 
@@ -290,29 +295,42 @@ class AdvancedBacktestEngine:
             return 0
     
     def _check_exit_conditions(self, trade, high, low, current_price, current_time):
-        """Check if SL or TP is hit"""
+        """Check if SL or TP is hit.
+        When trailing SL has moved SL into profit zone, TP gets priority
+        since both could be hit in the same candle and TP is more favorable."""
+        entry = trade['entry_price']
+        
         if trade['type'] == "BUY":
-            if low <= trade['sl']:
-                return {
-                    'price': trade['sl'],
-                    'reason': 'SL Hit'
-                }
-            elif high >= trade['tp']:
-                return {
-                    'price': trade['tp'],
-                    'reason': 'TP Hit'
-                }
+            sl_hit = low <= trade['sl']
+            tp_hit = high >= trade['tp']
+            sl_in_profit = trade['sl'] >= entry  # trailing SL moved to profit
+            
+            # If both hit same candle and SL is in profit zone, prefer TP
+            if sl_hit and tp_hit and sl_in_profit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
+            elif tp_hit and sl_in_profit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
+            elif sl_hit:
+                reason = 'Trailing SL Hit' if sl_in_profit else 'SL Hit'
+                return {'price': trade['sl'], 'reason': reason}
+            elif tp_hit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
+                
         else:  # SELL
-            if high >= trade['sl']:
-                return {
-                    'price': trade['sl'],
-                    'reason': 'SL Hit'
-                }
-            elif low <= trade['tp']:
-                return {
-                    'price': trade['tp'],
-                    'reason': 'TP Hit'
-                }
+            sl_hit = high >= trade['sl']
+            tp_hit = low <= trade['tp']
+            sl_in_profit = trade['sl'] <= entry  # trailing SL moved to profit
+            
+            # If both hit same candle and SL is in profit zone, prefer TP
+            if sl_hit and tp_hit and sl_in_profit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
+            elif tp_hit and sl_in_profit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
+            elif sl_hit:
+                reason = 'Trailing SL Hit' if sl_in_profit else 'SL Hit'
+                return {'price': trade['sl'], 'reason': reason}
+            elif tp_hit:
+                return {'price': trade['tp'], 'reason': 'TP Hit'}
         
         return None
     
