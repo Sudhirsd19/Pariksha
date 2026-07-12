@@ -465,8 +465,6 @@ class StrictChecklistEngine:
                 signal = "STRONG BUY"
             elif 70 <= final_score <= 79:
                 signal = "MODERATE BUY"
-            elif 50 <= final_score < 70:
-                signal = "WEAK BUY"
             else:
                 signal = "NONE"
         else:
@@ -476,8 +474,6 @@ class StrictChecklistEngine:
                 signal = "STRONG SELL"
             elif 70 <= final_score <= 79:
                 signal = "MODERATE SELL"
-            elif 50 <= final_score < 70:
-                signal = "WEAK SELL"
             else:
                 signal = "NONE"
         
