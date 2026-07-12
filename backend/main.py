@@ -2088,7 +2088,7 @@ async def trading_loop():
                                 
                     capital_limit = float(settings.get("capital_limit", 10000))
                     
-                    trade_symbol = symbol
+                    trade_symbol = token_manager.get_symbol(symbol)
                     trade_token = token
                     trade_side = side
                     qty = 0

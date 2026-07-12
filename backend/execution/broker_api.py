@@ -17,7 +17,8 @@ class AngelOneBroker:
             return False
 
         try:
-            totp = pyotp.TOTP(config.ANGEL_TOTP_KEY).now()
+            totp_key = config.ANGEL_TOTP_KEY.replace(" ", "") if config.ANGEL_TOTP_KEY else ""
+            totp = pyotp.TOTP(totp_key).now()
             data = self.smart_api.generateSession(config.ANGEL_CLIENT_ID, config.ANGEL_PIN, totp)
 
             if data.get('status'):  # FIX: use .get() to avoid KeyError on unexpected response
@@ -47,8 +48,12 @@ class AngelOneBroker:
             current_ltp = self.get_market_data(exchange, symbol, token)
             if current_ltp > 0:
                 slippage = abs(current_ltp - price) / price
-                if slippage > 0.005:  # 0.5% max slippage
-                    print(f"[Broker] BLOCKED: High slippage detected ({slippage:.4f})")
+                # For options (CE/PE), allow up to 5.0% slippage due to high premium volatility.
+                # For futures/equity, keep it tight at 0.5%.
+                is_option = "CE" in symbol or "PE" in symbol
+                max_slippage = 0.05 if is_option else 0.005
+                if slippage > max_slippage:
+                    print(f"[Broker] BLOCKED: High slippage detected ({slippage:.4f} > {max_slippage:.4f}) for {symbol}")
                     return None
 
         try:
