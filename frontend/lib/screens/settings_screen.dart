@@ -553,8 +553,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       margin: const EdgeInsets.only(bottom: 24),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
+        // ignore: deprecated_member_use
         color: Colors.white.withOpacity(0.02),
         borderRadius: BorderRadius.circular(24),
+        // ignore: deprecated_member_use
         border: Border.all(color: Colors.white.withOpacity(0.03)),
       ),
       child: Column(
@@ -580,6 +582,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _equityAutoExecution,
             onChanged: (val) => setState(() => _equityAutoExecution = val),
             activeThumbColor: activeColor,
+            // ignore: deprecated_member_use
             activeTrackColor: activeColor.withOpacity(0.2),
             inactiveThumbColor: Colors.white38,
             inactiveTrackColor: Colors.white10,
@@ -595,9 +598,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: RadioListTile<String>(
                     title: const Text('FIXED SHARES', style: TextStyle(color: Colors.white, fontSize: 12)),
                     value: 'FIXED',
+                    // ignore: deprecated_member_use
                     groupValue: _equityQtyMode,
                     activeColor: activeColor,
                     contentPadding: EdgeInsets.zero,
+                    // ignore: deprecated_member_use
                     onChanged: (val) => setState(() => _equityQtyMode = val!),
                   ),
                 ),
@@ -605,9 +610,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: RadioListTile<String>(
                     title: const Text('CAPITAL LIMIT', style: TextStyle(color: Colors.white, fontSize: 12)),
                     value: 'CAPITAL_LIMIT',
+                    // ignore: deprecated_member_use
                     groupValue: _equityQtyMode,
                     activeColor: activeColor,
                     contentPadding: EdgeInsets.zero,
+                    // ignore: deprecated_member_use
                     onChanged: (val) => setState(() => _equityQtyMode = val!),
                   ),
                 ),

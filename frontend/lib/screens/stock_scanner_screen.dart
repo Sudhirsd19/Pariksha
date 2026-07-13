@@ -2311,11 +2311,13 @@ class _MeshBackground extends StatelessWidget {
         Positioned(
           top: 100,
           right: -100,
+          // ignore: deprecated_member_use
           child: _buildOrb(400, Colors.cyanAccent.withOpacity(0.05)),
         ),
         Positioned(
           bottom: 100,
           left: -150,
+          // ignore: deprecated_member_use
           child: _buildOrb(500, Colors.purpleAccent.withOpacity(0.05)),
         ),
       ],
