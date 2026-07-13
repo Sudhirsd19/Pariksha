@@ -553,9 +553,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       margin: const EdgeInsets.only(bottom: 24),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.02),
+        color: Colors.white.withOpacity(0.02),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+        border: Border.all(color: Colors.white.withOpacity(0.03)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -580,7 +580,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _equityAutoExecution,
             onChanged: (val) => setState(() => _equityAutoExecution = val),
             activeThumbColor: activeColor,
-            activeTrackColor: activeColor.withValues(alpha: 0.2),
+            activeTrackColor: activeColor.withOpacity(0.2),
             inactiveThumbColor: Colors.white38,
             inactiveTrackColor: Colors.white10,
             contentPadding: EdgeInsets.zero,

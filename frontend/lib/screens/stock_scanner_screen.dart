@@ -282,44 +282,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
   }
 
 
-class _MeshBackground extends StatelessWidget {
-  const _MeshBackground();
 
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Positioned(
-          top: 100,
-          right: -100,
-          child: _buildOrb(400, Colors.cyanAccent.withValues(alpha: 0.05)),
-        ),
-        Positioned(
-          bottom: 100,
-          left: -150,
-          child: _buildOrb(500, Colors.purpleAccent.withValues(alpha: 0.05)),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildOrb(double size, Color color) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color,
-            blurRadius: 120,
-            spreadRadius: 60,
-          )
-        ],
-      ),
-    );
-  }
-}
 
 
   Widget _buildPriceFilters() {
@@ -2332,6 +2295,45 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
                 }).toList(),
               ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MeshBackground extends StatelessWidget {
+  const _MeshBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned(
+          top: 100,
+          right: -100,
+          child: _buildOrb(400, Colors.cyanAccent.withOpacity(0.05)),
+        ),
+        Positioned(
+          bottom: 100,
+          left: -150,
+          child: _buildOrb(500, Colors.purpleAccent.withOpacity(0.05)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOrb(double size, Color color) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color,
+            blurRadius: 120,
+            spreadRadius: 60,
+          )
         ],
       ),
     );
