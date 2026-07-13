@@ -146,11 +146,62 @@ class StockAnalyzer:
             except Exception:
                 pass
 
+        # Run all engines for full scoring parity with /api/scanner/scan
+        from backend.engines.structure_engine import StructureEngine
+        from backend.engines.candlestick_engine import candlestick_engine
+        from backend.engines.mtf_engine import mtf_engine
+        from backend.engines.volume_engine import VolumeEngine
+        from backend.engines.momentum_engine import MomentumEngine
+        from backend.engines.trend_engine import TrendEngine
+
+        structure_engine = StructureEngine()
+        volume_engine = VolumeEngine()
+        momentum_engine = MomentumEngine()
+        trend_engine = TrendEngine()
+
+        structure_result = structure_engine.analyze(df)
+        candle_result = candlestick_engine.analyze(df)
+        volume_result = volume_engine.analyze(df)
+        momentum_result = momentum_engine.analyze(df)
+        trend_result = trend_engine.analyze(df)
+
+        # Fetch HTF data for MTF Engine
+        df_15m = None
+        df_1h = None
+        if api_client and token:
+            try:
+                df_15m = await asyncio.to_thread(fetch_historical_data, api_client, token, "FIFTEEN_MINUTE", 5, exchange)
+                df_1h = await asyncio.to_thread(fetch_historical_data, api_client, token, "ONE_HOUR", 10, exchange)
+            except Exception:
+                pass
+        if df_15m is None or (hasattr(df_15m, 'empty') and df_15m.empty):
+            try:
+                import yfinance as yf
+                ticker_yf = f"{base_symbol}.NS"
+                df_15m = await asyncio.to_thread(lambda: yf.Ticker(ticker_yf).history(period="10d", interval="15m"))
+            except Exception:
+                pass
+        if df_1h is None or (hasattr(df_1h, 'empty') and df_1h.empty):
+            try:
+                import yfinance as yf
+                ticker_yf = f"{base_symbol}.NS"
+                df_1h = await asyncio.to_thread(lambda: yf.Ticker(ticker_yf).history(period="20d", interval="1h"))
+            except Exception:
+                pass
+
+        mtf_result = mtf_engine.analyze(df, df, df_15m, df_1h)
+
         # Run strict checklist engine
         strict_result = strict_checklist_engine.evaluate(
             base_symbol, df.copy(),
             is_nifty_bullish=is_nifty_bullish,
-            market_depth_buyer_ratio=market_depth_buyer_ratio
+            market_depth_buyer_ratio=market_depth_buyer_ratio,
+            structure_result=structure_result,
+            candle_result=candle_result,
+            mtf_result=mtf_result,
+            volume_result=volume_result,
+            momentum_result=momentum_result,
+            trend_direction=trend_result
         )
 
         score = strict_result.get("strict_score", 0)

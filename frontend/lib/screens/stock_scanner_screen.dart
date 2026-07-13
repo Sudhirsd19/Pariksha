@@ -210,7 +210,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
       backgroundColor: const Color(0xFF040408),
       body: Stack(
         children: [
-          _buildMeshBackground(),
+          const _MeshBackground(),
           CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [
@@ -281,7 +281,12 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     );
   }
 
-  Widget _buildMeshBackground() {
+
+class _MeshBackground extends StatelessWidget {
+  const _MeshBackground();
+
+  @override
+  Widget build(BuildContext context) {
     return Stack(
       children: [
         Positioned(
@@ -314,6 +319,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
       ),
     );
   }
+}
+
 
   Widget _buildPriceFilters() {
     final filters = [
@@ -552,19 +559,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
     final String symbol = data['symbol'] ?? "";
     final double ltp = (data['ltp'] as num?)?.toDouble() ?? 0.0;
 
-    final now = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final activeTrade = provider.signals.firstWhere(
-      (sig) {
-        final int ts = sig['timestamp'] is num 
-            ? (sig['timestamp'] as num).toInt() 
-            : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
-        return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
-               sig['status'] != "CLOSED" && 
-               ts >= todayStart;
-      },
-      orElse: () => null,
-    );
+    final activeTrade = provider.activeTradeMap[symbol];
     final bool hasActive = activeTrade != null;
     final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 
@@ -807,13 +802,11 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: (data['strict_breakdown'] as Map).length,
-                  itemBuilder: (context, idx) {
-                    final key = (data['strict_breakdown'] as Map).keys.elementAt(idx);
-                    final value = (data['strict_breakdown'] as Map)[key];
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: (data['strict_breakdown'] as Map).entries.map((entry) {
+                    final key = entry.key;
+                    final value = entry.value;
                     // Define max points per category
                     final hasNewSMC = (data['strict_breakdown'] as Map).containsKey("SMC Structure");
                     int maxPts = 0;
@@ -883,7 +876,7 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                         ],
                       ),
                     );
-                  },
+                  }).toList(),
                 ),
               ],
             ),
@@ -1514,20 +1507,8 @@ class _StockScannerScreenState extends State<StockScannerScreen> {
                 rec = 'SELL';
               }
 
-              // Find if this stock has an active trade open
-              final now = DateTime.now();
-              final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-              final activeTrade = provider.signals.firstWhere(
-                (sig) {
-                  final int ts = sig['timestamp'] is num 
-                      ? (sig['timestamp'] as num).toInt() 
-                      : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
-                  return (sig['symbol'] == "$symbol-EQ" || sig['symbol'] == symbol) && 
-                         sig['status'] != "CLOSED" && 
-                         ts >= todayStart;
-                },
-                orElse: () => null,
-              );
+              // Use pre-computed trade map for O(1) lookup
+              final activeTrade = provider.activeTradeMap[symbol];
               final bool hasActive = activeTrade != null;
               final String? tradeSide = hasActive ? activeTrade['signal'] : null;
 

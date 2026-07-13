@@ -165,6 +165,22 @@ class ApiService {
     return null;
   }
 
+  Future<Map<String, dynamic>?> batchScanStocks(List<String> symbols) async {
+    if (symbols.isEmpty) return null;
+    try {
+      final symbolsParam = symbols.join(',');
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/scanner/batch-scan?symbols=$symbolsParam'),
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("Error in batch scan: $e");
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>?> executeStockTrade(String symbol, String side, int qty, {double? ltp}) async {
     try {
       final url = ltp != null 

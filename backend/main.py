@@ -54,6 +54,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- SCAN CACHE (60s TTL) ---
+import time as _time
+_scan_cache = {}  # {symbol: {"result": {...}, "timestamp": float}}
+_SCAN_CACHE_TTL = 60  # seconds
+
+def _get_cached_scan(symbol: str):
+    entry = _scan_cache.get(symbol)
+    if entry and (_time.time() - entry["timestamp"]) < _SCAN_CACHE_TTL:
+        return entry["result"]
+    return None
+
+def _set_cached_scan(symbol: str, result: dict):
+    _scan_cache[symbol] = {"result": result, "timestamp": _time.time()}
+
 def send_push_notification(title, body):
     """Send FCM notification to all devices subscribed to 'trading_alerts' topic."""
     try:
@@ -1068,6 +1082,11 @@ async def scan_stock_signals(symbol: str):
         ticker = symbol
         base_symbol = symbol.replace(".NS", "")
     
+    # Check cache first
+    cached = _get_cached_scan(base_symbol)
+    if cached:
+        return cached
+    
     token = token_manager.get_token(base_symbol)
     exchange = token_manager.get_exchange(base_symbol)
     
@@ -1194,7 +1213,7 @@ async def scan_stock_signals(symbol: str):
     ws_current_score = strict_result.get("strict_score", 0)
 
     # Return directly from strict_checklist_engine
-    return {
+    result = {
         "status": "success",
         "symbol": base_symbol,
         "ltp": current_price,
@@ -1203,6 +1222,202 @@ async def scan_stock_signals(symbol: str):
         "breakdown": strict_result.get("breakdown", {}),
         "strict_breakdown": strict_result.get("breakdown", {})
     }
+    _set_cached_scan(base_symbol, result)
+    asyncio.create_task(check_and_trigger_auto_execution(
+        base_symbol,
+        strict_result.get("strict_signal", "NONE"),
+        current_price,
+        strict_result.get("strict_score", 0)
+    ))
+    return result
+
+@app.get("/api/scanner/batch-scan")
+async def batch_scan_signals(symbols: str = ""):
+    """
+    Batch scan multiple symbols in parallel. Accepts comma-separated symbols.
+    Uses cache to avoid redundant computation. Returns results for all symbols.
+    """
+    if not symbols:
+        return {"status": "error", "message": "No symbols provided"}
+    
+    symbol_list = [s.strip().upper().replace(".NS", "") for s in symbols.split(",") if s.strip()]
+    if not symbol_list:
+        return {"status": "error", "message": "No valid symbols provided"}
+    
+    # Return cached results immediately, collect uncached symbols
+    results = {}
+    uncached_symbols = []
+    for sym in symbol_list:
+        cached = _get_cached_scan(sym)
+        if cached:
+            results[sym] = cached
+        else:
+            uncached_symbols.append(sym)
+    
+    if not uncached_symbols:
+        return {"status": "success", "results": results}
+    
+    # Ensure broker is logged in
+    if not broker.session:
+        try:
+            broker.login()
+        except Exception as e:
+            print(f"[Batch Scan] Broker login failed: {e}")
+    
+    # Fetch Nifty data ONCE
+    nifty_df = None
+    is_nifty_bullish = True
+    if broker.session:
+        nifty_token = token_manager.get_token("NIFTY")
+        if nifty_token:
+            try:
+                nifty_df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, nifty_token, "FIFTEEN_MINUTE", 5, "NSE")
+                if nifty_df is not None and not nifty_df.empty:
+                    from backend.indicators.technical_indicators import TechnicalIndicators
+                    nifty_df = TechnicalIndicators.add_ema(nifty_df, 50)
+                    last_nifty = nifty_df.iloc[-1]
+                    if last_nifty['close'] < last_nifty['EMA_50']:
+                        is_nifty_bullish = False
+            except Exception as e:
+                print(f"[Batch Scan] Failed to fetch Nifty: {e}")
+    
+    # Fetch batch market depth for all uncached symbols
+    market_depths = {}
+    if broker.session and uncached_symbols:
+        try:
+            tokens_to_fetch = []
+            for s in uncached_symbols:
+                t = token_manager.get_token(s)
+                if t:
+                    tokens_to_fetch.append(str(t))
+            if tokens_to_fetch:
+                exchangeTokens = {"NSE": tokens_to_fetch}
+                res = await asyncio.to_thread(broker.smart_api.getMarketData, "FULL", exchangeTokens)
+                if res and res.get('status') and res.get('data'):
+                    data_list = res.get('data', {}).get('fetched', [])
+                    for item in data_list:
+                        tok_str = str(item.get('symbolToken'))
+                        market_depths[tok_str] = {
+                            "totBuyQuan": item.get("totBuyQuan", 0),
+                            "totSellQuan": item.get("totSellQuan", 0)
+                        }
+        except Exception as e:
+            print(f"[Batch Scan] Failed to fetch batch market depth: {e}")
+    
+    # Process uncached symbols in parallel with semaphore
+    sem = asyncio.Semaphore(3)  # Max 3 concurrent to respect API rate limits
+    
+    async def scan_one(sym):
+        async with sem:
+            try:
+                ticker = f"{sym}.NS"
+                token = token_manager.get_token(sym)
+                exchange = token_manager.get_exchange(sym) or "NSE"
+                
+                df = None
+                if broker.session and token:
+                    df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+                    await asyncio.sleep(0.35)  # Rate limit
+                
+                if df is None or df.empty:
+                    try:
+                        import yfinance as yf
+                        df = await asyncio.to_thread(lambda t=ticker: yf.Ticker(t).history(period="5d", interval="5m"))
+                    except Exception:
+                        return sym, None
+                
+                if df is None or df.empty:
+                    return sym, None
+                
+                df.columns = [c.lower() for c in df.columns]
+                
+                # Market depth
+                market_depth_buyer_ratio = 1.0
+                if token and str(token) in market_depths:
+                    depth_info = market_depths[str(token)]
+                    tot_buy = depth_info.get("totBuyQuan", 0)
+                    tot_sell = depth_info.get("totSellQuan", 0)
+                    if tot_sell > 0:
+                        market_depth_buyer_ratio = tot_buy / tot_sell
+                
+                # Run ALL engines (full parity with /api/scanner/scan)
+                from backend.engines.structure_engine import StructureEngine
+                from backend.engines.candlestick_engine import candlestick_engine
+                from backend.engines.volume_engine import VolumeEngine
+                from backend.engines.momentum_engine import MomentumEngine
+                from backend.engines.trend_engine import TrendEngine
+                from backend.engines.mtf_engine import mtf_engine
+                
+                structure_engine = StructureEngine()
+                volume_engine = VolumeEngine()
+                momentum_engine = MomentumEngine()
+                trend_engine = TrendEngine()
+                
+                structure_result = structure_engine.analyze(df)
+                candle_result = candlestick_engine.analyze(df)
+                volume_result = volume_engine.analyze(df)
+                momentum_result = momentum_engine.analyze(df)
+                trend_result = trend_engine.analyze(df)
+                
+                # Fetch HTF data for MTF
+                df_15m = None
+                df_1h = None
+                if broker.session and token:
+                    try:
+                        df_15m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIFTEEN_MINUTE", 5, exchange)
+                        await asyncio.sleep(0.35)
+                        df_1h = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_HOUR", 10, exchange)
+                        await asyncio.sleep(0.35)
+                    except Exception:
+                        pass
+                
+                mtf_result = mtf_engine.analyze(df, df, df_15m, df_1h)
+                
+                strict_result = await asyncio.to_thread(
+                    strict_checklist_engine.evaluate,
+                    ticker, df.copy(),
+                    is_nifty_bullish=is_nifty_bullish,
+                    market_depth_buyer_ratio=market_depth_buyer_ratio,
+                    structure_result=structure_result,
+                    candle_result=candle_result,
+                    mtf_result=mtf_result,
+                    volume_result=volume_result,
+                    momentum_result=momentum_result,
+                    trend_direction=trend_result
+                )
+                
+                current_price = float(df['close'].iloc[-1]) if 'close' in df.columns else 0.0
+                
+                scan_result = {
+                    "status": "success",
+                    "symbol": sym,
+                    "ltp": current_price,
+                    "strict_signal": strict_result.get("strict_signal", "NONE"),
+                    "strict_score": strict_result.get("strict_score", 0),
+                    "breakdown": strict_result.get("breakdown", {}),
+                    "strict_breakdown": strict_result.get("breakdown", {})
+                }
+                _set_cached_scan(sym, scan_result)
+                asyncio.create_task(check_and_trigger_auto_execution(
+                    sym,
+                    strict_result.get("strict_signal", "NONE"),
+                    current_price,
+                    strict_result.get("strict_score", 0)
+                ))
+                return sym, scan_result
+            except Exception as e:
+                print(f"[Batch Scan] Error processing {sym}: {e}")
+                return sym, None
+    
+    # Run all uncached in parallel
+    tasks = [scan_one(sym) for sym in uncached_symbols]
+    scan_results = await asyncio.gather(*tasks)
+    
+    for sym, result in scan_results:
+        if result:
+            results[sym] = result
+    
+    return {"status": "success", "results": results}
 
 @app.get("/api/scanner/bulk-scan")
 async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
@@ -1294,85 +1509,132 @@ async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
         except Exception as e:
             print(f"[Bulk Scan] Failed to fetch batch market depth: {e}")
 
-    for sym in scan_list:
-        try:
-            base_symbol = sym.replace(".NS", "")
-            ticker = f"{base_symbol}.NS"
-            
-            df = None
-            token = None
-            exchange = "NSE"
-            if broker.session:
-                token = token_manager.get_token(base_symbol)
-                exchange = token_manager.get_exchange(base_symbol)
-                if token:
-                    df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
-                    await asyncio.sleep(0.4)  # Respect AngelOne 3 req/sec rate limit
+    sem = asyncio.Semaphore(3)  # Max 3 concurrent to respect API rate limits
+    
+    async def scan_one(sym):
+        async with sem:
+            try:
+                base_symbol = sym.replace(".NS", "")
+                ticker = f"{base_symbol}.NS"
+                
+                # Check cache first
+                cached = _get_cached_scan(base_symbol)
+                if cached:
+                    return cached
+                
+                df = None
+                token = None
+                exchange = "NSE"
+                if broker.session:
+                    token = token_manager.get_token(base_symbol)
+                    exchange = token_manager.get_exchange(base_symbol)
+                    if token:
+                        df = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+                        await asyncio.sleep(0.35)  # Rate limit
+                        
+                if df is None or df.empty:
+                    try:
+                        import yfinance as yf
+                        df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
+                    except Exception as e:
+                        print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
+    
+                if df is not None and not df.empty:
+                    df.columns = [c.lower() for c in df.columns]
+                    market_depth_buyer_ratio = 1.0
+                    if token and str(token) in market_depths:
+                        depth_info = market_depths[str(token)]
+                        tot_buy = depth_info.get("totBuyQuan", 0)
+                        tot_sell = depth_info.get("totSellQuan", 0)
+                        if tot_sell > 0:
+                            market_depth_buyer_ratio = tot_buy / tot_sell
+    
+                    # Run ALL engines (full parity with /api/scanner/scan)
+                    from backend.engines.structure_engine import StructureEngine
+                    from backend.engines.candlestick_engine import candlestick_engine
+                    from backend.engines.volume_engine import VolumeEngine
+                    from backend.engines.momentum_engine import MomentumEngine
+                    from backend.engines.trend_engine import TrendEngine
+                    from backend.engines.mtf_engine import mtf_engine
+    
+                    structure_engine = StructureEngine()
+                    volume_engine = VolumeEngine()
+                    momentum_engine = MomentumEngine()
+                    trend_engine = TrendEngine()
+    
+                    structure_result = structure_engine.analyze(df)
+                    candle_result = candlestick_engine.analyze(df)
+                    volume_result = volume_engine.analyze(df)
+                    momentum_result = momentum_engine.analyze(df)
+                    trend_result = trend_engine.analyze(df)
                     
-            if df is None or df.empty:
-                try:
-                    import yfinance as yf
-                    df = await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="5d", interval="5m"))
-                except Exception as e:
-                    print(f"[Bulk Scan] yfinance fallback failed for {ticker}: {e}")
+                    # Fetch HTF data for MTF Engine to make scores strictly consistent
+                    df_15m = None
+                    df_1h = None
+                    if broker.session and token:
+                        try:
+                            df_15m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIFTEEN_MINUTE", 5, exchange)
+                            await asyncio.sleep(0.35)
+                            df_1h = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_HOUR", 10, exchange)
+                            await asyncio.sleep(0.35)
+                        except Exception:
+                            pass
+                    
+                    mtf_result = mtf_engine.analyze(df, df, df_15m, df_1h)
+    
+                    strict_result = await asyncio.to_thread(
+                        strict_checklist_engine.evaluate, 
+                        ticker, 
+                        df.copy(), 
+                        is_nifty_bullish=is_nifty_bullish,
+                        market_depth_buyer_ratio=market_depth_buyer_ratio,
+                        structure_result=structure_result,
+                        candle_result=candle_result,
+                        mtf_result=mtf_result,
+                        volume_result=volume_result,
+                        momentum_result=momentum_result,
+                        trend_direction=trend_result
+                    )
+                    
+                    # Fetch LTP from the most recent candle
+                    ltp = df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1]
+                    
+                    scan_result = {
+                        "status": "success",
+                        "symbol": base_symbol,
+                        "ltp": ltp,
+                        "strict_signal": strict_result.get("strict_signal", "NONE"),
+                        "strict_score": strict_result.get("strict_score", 0),
+                        "breakdown": strict_result.get("breakdown", {}),
+                        "strict_breakdown": strict_result.get("breakdown", {})
+                    }
+                    _set_cached_scan(base_symbol, scan_result)
+                    asyncio.create_task(check_and_trigger_auto_execution(
+                        base_symbol,
+                        strict_result.get("strict_signal", "NONE"),
+                        ltp,
+                        strict_result.get("strict_score", 0)
+                    ))
+                    return scan_result
+            except Exception as e:
+                print(f"[Bulk Scan] Error processing {sym}: {e}")
+            return None
 
-            if df is not None and not df.empty:
-                df.columns = [c.lower() for c in df.columns]
-                market_depth_buyer_ratio = 1.0
-                if token and str(token) in market_depths:
-                    depth_info = market_depths[str(token)]
-                    tot_buy = depth_info.get("totBuyQuan", 0)
-                    tot_sell = depth_info.get("totSellQuan", 0)
-                    if tot_sell > 0:
-                        market_depth_buyer_ratio = tot_buy / tot_sell
-
-                # Run engines on df (5m data)
-                from backend.engines.structure_engine import StructureEngine
-                from backend.engines.candlestick_engine import candlestick_engine
-                from backend.engines.volume_engine import VolumeEngine
-                from backend.engines.momentum_engine import MomentumEngine
-                from backend.engines.trend_engine import TrendEngine
-
-                structure_engine = StructureEngine()
-                volume_engine = VolumeEngine()
-                momentum_engine = MomentumEngine()
-                trend_engine = TrendEngine()
-
-                structure_result = structure_engine.analyze(df)
-                candle_result = candlestick_engine.analyze(df)
-                volume_result = volume_engine.analyze(df)
-                momentum_result = momentum_engine.analyze(df)
-                trend_result = trend_engine.analyze(df)
-
-                strict_result = await asyncio.to_thread(
-                    strict_checklist_engine.evaluate, 
-                    ticker, 
-                    df.copy(), 
-                    is_nifty_bullish=is_nifty_bullish,
-                    market_depth_buyer_ratio=market_depth_buyer_ratio,
-                    structure_result=structure_result,
-                    candle_result=candle_result,
-                    volume_result=volume_result,
-                    momentum_result=momentum_result,
-                    trend_direction=trend_result
-                )
-                
-                # Fetch LTP from the most recent candle
-                ltp = df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1]
-                
-                if min_price <= ltp <= max_price:
-                    # Only show high-conviction stocks with score >= 70 in screener
-                    if strict_result.get("strict_score", 0) >= 70:
-                        active_trades.append({
-                            "status": "success",
-                            "symbol": base_symbol,
-                            "ltp": ltp,
-                            "strict_signal": strict_result.get("strict_signal", "NONE"),
-                            "strict_score": strict_result.get("strict_score", 0),
-                            "breakdown": strict_result.get("breakdown", {})
-                        })
-        except Exception as e:
-            print(f"[Bulk Scan] Error processing {sym}: {e}")
+    tasks = [scan_one(sym) for sym in scan_list]
+    scan_results = await asyncio.gather(*tasks)
+    
+    for res in scan_results:
+        if res and min_price <= res["ltp"] <= max_price:
+            # Only show high-conviction stocks with score >= 70 in screener
+            if res.get("strict_score", 0) >= 70:
+                active_trades.append({
+                    "status": "success",
+                    "symbol": res["symbol"],
+                    "ltp": res["ltp"],
+                    "strict_signal": res["strict_signal"],
+                    "strict_score": res["strict_score"],
+                    "breakdown": res["strict_breakdown"]
+                })
 
     # Sort by Strict Score (Strongest setups at the top)
     active_trades.sort(key=lambda x: x.get("strict_score", 0), reverse=True)
@@ -1664,6 +1926,76 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         "order_id": order_id,
         "trade": signal_data
     }
+
+async def check_and_trigger_auto_execution(symbol: str, side: str, ltp: float, strict_score: int):
+    """
+    Check if Auto-Execution is enabled in settings.
+    If yes, perform risk checks and programmatically execute trade.
+    """
+    settings = await asyncio.to_thread(db_manager.get_settings) or {}
+    
+    # Check if auto execution is enabled
+    auto_execution = settings.get("equity_auto_execution", False)
+    if not auto_execution:
+        return
+        
+    side = side.upper()
+    if side not in ["BUY", "SELL"]:
+        return
+        
+    min_score = int(settings.get("equity_min_score", 70))
+    if strict_score < min_score:
+        return
+        
+    # Check if already in active trade to prevent double entry
+    symbol = symbol.upper()
+    for active_trade in trade_manager.active_trades:
+        active_sym = active_trade.get("symbol", "").upper().replace("-EQ", "")
+        if active_sym == symbol:
+            print(f"[AutoExecution] Blocked: Active trade already exists for {symbol}")
+            return
+            
+    # Check if closed today already
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist_tz)
+    start_of_day_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day_ms = int(start_of_day_ist.timestamp() * 1000)
+    
+    symbol_closed_today = [
+        sig for sig in signals
+        if (sig.get("symbol") == symbol or sig.get("symbol") == f"{symbol}-EQ")
+        and sig.get("status") == "CLOSED"
+        and int(sig.get("timestamp", 0)) >= start_of_day_ms
+    ]
+    if symbol_closed_today:
+        print(f"[AutoExecution] Blocked: {symbol} was already traded and closed today.")
+        return
+        
+    # Calculate quantity
+    qty_mode = settings.get("equity_qty_mode", "FIXED")
+    capital_limit = float(settings.get("capital_limit", 10000.0))
+    
+    if qty_mode == "CAPITAL_LIMIT":
+        qty = int(capital_limit / ltp) if ltp > 0 else 1
+    else:  # FIXED
+        qty = int(settings.get("equity_fixed_qty", 1))
+        
+    if qty <= 0:
+        qty = 1
+        
+    print(f"[AutoExecution] Triggering auto trade for {symbol} - Side: {side}, Qty: {qty}, LTP: {ltp}, Score: {strict_score}")
+    try:
+        res = await execute_stock_trade(symbol=symbol, side=side, qty=qty, ltp=ltp)
+        if res and res.get("status") == "success":
+            print(f"[AutoExecution] Success: Order placed for {symbol}")
+            send_push_notification(
+                f"⚡ AUTO-EXECUTION SUCCESS: {side} {symbol}",
+                f"Executed {qty} shares of {symbol} @ Rs.{ltp:.2f} (Score: {strict_score}/100)"
+            )
+        else:
+            print(f"[AutoExecution] Execution failed: {res.get('message', 'Unknown error')}")
+    except Exception as e:
+        print(f"[AutoExecution] Exception during order: {e}")
 
 async def trading_loop():
     global trading_active, ws_manager

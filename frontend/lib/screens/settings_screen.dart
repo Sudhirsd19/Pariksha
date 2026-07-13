@@ -22,6 +22,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _fnoTrading = true;
   bool _equityTrading = true;
   bool _useTimeRestrictions = true;
+  bool _equityAutoExecution = false;
+  String _equityQtyMode = 'FIXED';
+  int _equityFixedQty = 1;
+  int _equityMinScore = 70;
   bool _isSaving = false;
   bool _isInitialized = false;
 
@@ -46,6 +50,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _fnoTrading = settings['fno_trading'] ?? true;
       _equityTrading = settings['equity_trading'] ?? true;
       _useTimeRestrictions = settings['use_time_restrictions'] ?? true;
+      _equityAutoExecution = settings['equity_auto_execution'] ?? false;
+      _equityQtyMode = settings['equity_qty_mode'] ?? 'FIXED';
+      _equityFixedQty = (settings['equity_fixed_qty'] as num?)?.toInt() ?? 1;
+      _equityMinScore = (settings['equity_min_score'] as num?)?.toInt() ?? 70;
     });
   }
 
@@ -65,6 +73,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'fno_trading': _fnoTrading,
       'equity_trading': _equityTrading,
       'use_time_restrictions': _useTimeRestrictions,
+      'equity_auto_execution': _equityAutoExecution,
+      'equity_qty_mode': _equityQtyMode,
+      'equity_fixed_qty': _equityFixedQty,
+      'equity_min_score': _equityMinScore,
     });
     setState(() => _isSaving = false);
     if (mounted) {
@@ -186,6 +198,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       (val) => setState(() => _capitalLimit = val),
                       Icons.account_balance_wallet_rounded, Colors.cyanAccent
                     ),
+                    
+                    _buildSectionHeader('EQUITY AUTO-EXECUTION'),
+                    _buildEquityAutoExecutionPanel(),
 
                     const SizedBox(height: 30),
                     _buildCyberSaveButton(),
@@ -527,6 +542,132 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: const Icon(Icons.power_off_rounded, color: Colors.redAccent),
             onPressed: () => _showSquareOffDialog(context, provider),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEquityAutoExecutionPanel() {
+    const activeColor = Colors.cyanAccent;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.bolt_rounded, color: activeColor, size: 18),
+              SizedBox(width: 12),
+              Text('EQUITY AUTO-EXECUTION SETTINGS', style: TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SwitchListTile(
+            title: const Text(
+              'AUTO-EXECUTION PROTOCOL',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+            ),
+            subtitle: const Text(
+              'Automatic buy/sell order placement on scan signals.',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            value: _equityAutoExecution,
+            onChanged: (val) => setState(() => _equityAutoExecution = val),
+            activeThumbColor: activeColor,
+            activeTrackColor: activeColor.withValues(alpha: 0.2),
+            inactiveThumbColor: Colors.white38,
+            inactiveTrackColor: Colors.white10,
+            contentPadding: EdgeInsets.zero,
+          ),
+          if (_equityAutoExecution) ...[
+            const Divider(color: Colors.white10, height: 24),
+            const Text('QUANTITY ALLOCATION MODE', style: TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: RadioListTile<String>(
+                    title: const Text('FIXED SHARES', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    value: 'FIXED',
+                    groupValue: _equityQtyMode,
+                    activeColor: activeColor,
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (val) => setState(() => _equityQtyMode = val!),
+                  ),
+                ),
+                Expanded(
+                  child: RadioListTile<String>(
+                    title: const Text('CAPITAL LIMIT', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    value: 'CAPITAL_LIMIT',
+                    groupValue: _equityQtyMode,
+                    activeColor: activeColor,
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (val) => setState(() => _equityQtyMode = val!),
+                  ),
+                ),
+              ],
+            ),
+            if (_equityQtyMode == 'FIXED') ...[
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('FIXED SHARES COUNT', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.remove_rounded, color: Colors.white54),
+                        onPressed: _equityFixedQty > 1 ? () => setState(() => _equityFixedQty--) : null,
+                      ),
+                      Text(
+                        '$_equityFixedQty',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_rounded, color: Colors.white54),
+                        onPressed: () => setState(() => _equityFixedQty++),
+                      ),
+                    ],
+                  )
+                ],
+              ),
+            ],
+            const Divider(color: Colors.white10, height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('MINIMUM WHALE SCORE', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    Text('Only trigger auto-trades if score is above this', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_rounded, color: Colors.white54),
+                      onPressed: _equityMinScore > 20 ? () => setState(() => _equityMinScore -= 5) : null,
+                    ),
+                    Text(
+                      '$_equityMinScore',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add_rounded, color: Colors.white54),
+                      onPressed: _equityMinScore < 100 ? () => setState(() => _equityMinScore += 5) : null,
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ]
         ],
       ),
     );

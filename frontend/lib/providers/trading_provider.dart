@@ -31,12 +31,42 @@ class TradingProvider with ChangeNotifier {
   String get instrumentType => _systemSettings['instrument_type'] ?? 'FUTURES';
   bool get isFnoTrading => _systemSettings['fno_trading'] ?? true;
   bool get isEquityTrading => _systemSettings['equity_trading'] ?? true;
+  bool get equityAutoExecution => _systemSettings['equity_auto_execution'] ?? false;
+  String get equityQtyMode => _systemSettings['equity_qty_mode'] ?? 'FIXED';
+  int get equityFixedQty => _systemSettings['equity_fixed_qty'] ?? 1;
+  int get equityMinScore => _systemSettings['equity_min_score'] ?? 70;
   double get ltp => _ltp;
   String get sentiment => _sentiment;
   double get sentimentScore => _sentimentScore;
   double get dailyLoss => _dailyLoss;
   int get tradesToday => _tradesToday;
   List<dynamic> get signals => _signals;
+
+  // Pre-computed active trade map for O(1) lookup instead of O(N) per widget
+  Map<String, dynamic> _activeTradeMap = {};
+  Map<String, dynamic> get activeTradeMap => _activeTradeMap;
+
+  void _rebuildActiveTradeMap() {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final Map<String, dynamic> newMap = {};
+    for (final sig in _signals) {
+      final int ts = sig['timestamp'] is num
+          ? (sig['timestamp'] as num).toInt()
+          : (double.tryParse(sig['timestamp']?.toString() ?? '')?.toInt() ?? 0);
+      if (sig['status'] != "CLOSED" && ts >= todayStart) {
+        final symbol = (sig['symbol'] as String?)?.replaceAll('-EQ', '') ?? '';
+        if (symbol.isNotEmpty && !newMap.containsKey(symbol)) {
+          newMap[symbol] = sig;
+        }
+      }
+    }
+    _activeTradeMap = newMap;
+  }
+
+  // Debounce: track last scan time per symbol to avoid redundant re-scans
+  final Map<String, DateTime> _lastScanTime = {};
+  static const _scanDebounceSeconds = 30;
 
   Map<String, dynamic>? _analyticsData;
   Map<String, dynamic>? _pnlData;
@@ -157,28 +187,52 @@ class TradingProvider with ChangeNotifier {
           _wsReconnecting = false;
           _wsConnected = true;
           final jsonData = jsonDecode(data as String);
+          
+          bool needsNotify = false;
+          
+          final double oldLtpVal = _ltp;
           _ltp = (jsonData['ltp'] as num?)?.toDouble() ?? _ltp;
+          if (oldLtpVal != _ltp) {
+            needsNotify = true;
+          }
 
           // FIX 1: Read all new real-time fields from WebSocket payload
-          if (jsonData['sentiment'] != null) _sentiment = jsonData['sentiment'];
+          if (jsonData['sentiment'] != null && _sentiment != jsonData['sentiment']) {
+            _sentiment = jsonData['sentiment'];
+            needsNotify = true;
+          }
           if (jsonData['sentiment_score'] != null) {
-            _sentimentScore = (jsonData['sentiment_score'] as num).toDouble();
+            final double val = (jsonData['sentiment_score'] as num).toDouble();
+            if (_sentimentScore != val) {
+              _sentimentScore = val;
+              needsNotify = true;
+            }
           }
-          if (jsonData['in_killzone'] != null) {
+          if (jsonData['in_killzone'] != null && _inKillzone != jsonData['in_killzone']) {
             _inKillzone = jsonData['in_killzone'];
+            needsNotify = true;
           }
-          if (jsonData['is_active'] != null) {
+          if (jsonData['is_active'] != null && _isActive != jsonData['is_active']) {
             _isActive = jsonData['is_active'];
+            needsNotify = true;
           }
-          if (jsonData['trades_today'] != null) {
+          if (jsonData['trades_today'] != null && _tradesToday != jsonData['trades_today']) {
             _tradesToday = jsonData['trades_today'];
+            needsNotify = true;
           }
           if (jsonData['daily_loss'] != null) {
-            _dailyLoss = (jsonData['daily_loss'] as num).toDouble();
+            final double val = (jsonData['daily_loss'] as num).toDouble();
+            if (_dailyLoss != val) {
+              _dailyLoss = val;
+              needsNotify = true;
+            }
           }
-          // Fix: Read live Whale Score from WebSocket (updated on every stock scan)
           if (jsonData['current_score'] != null) {
-            _currentScore = (jsonData['current_score'] as num).toInt();
+            final int val = (jsonData['current_score'] as num).toInt();
+            if (_currentScore != val) {
+              _currentScore = val;
+              needsNotify = true;
+            }
           }
           
           // Watchlist live update
@@ -202,14 +256,20 @@ class TradingProvider with ChangeNotifier {
                 }
               }
             }
-            if (wUpdated && !_isDisposed) notifyListeners();
+            if (wUpdated) {
+              needsNotify = true;
+            }
           }
 
           // Throttle UI updates to 10Hz to save CPU
           final now = DateTime.now();
           if (now.difference(_lastUpdateTime).inMilliseconds > 100) {
             _lastUpdateTime = now;
-            if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
+            needsNotify = true;
+          }
+          
+          if (needsNotify && !_isDisposed) {
+            notifyListeners();
           }
         },
         onError: (e) {
@@ -341,6 +401,7 @@ class TradingProvider with ChangeNotifier {
         // CRIT-3: Atomic assignment instead of clear+addAll
         _signals.clear();
         _signals.addAll(newSignals);
+        _rebuildActiveTradeMap();
         if (!_isDisposed) notifyListeners(); // FIX CRIT-2: Check disposed
       }, onError: (e) {
         debugPrint(
@@ -431,6 +492,7 @@ class TradingProvider with ChangeNotifier {
     final logs = await _apiService.getLogs();
     _signals.clear();
     _signals.addAll(logs);
+    _rebuildActiveTradeMap();
     notifyListeners();
   }
 
@@ -658,39 +720,62 @@ class TradingProvider with ChangeNotifier {
 
   Future<void> refreshWatchlist() async {
     if (_isDisposed || _watchlist.isEmpty || _isRefreshingWatchlist) {
-      return; // FIX: Check disposed
+      return;
     }
     _isRefreshingWatchlist = true;
     if (!_isDisposed) notifyListeners();
 
     try {
-      final List<Map<String, dynamic>> updatedList =
-          List<Map<String, dynamic>>.from(_watchlist);
-      bool changesMade = false;
+      final symbols = _watchlist.map((item) => item['symbol'] as String).toList();
+      final batchResult = await _apiService.batchScanStocks(symbols);
 
-      // Now processes sequentially with a 600ms gap to stay safely under the limit.
-      for (final item in updatedList) {
-        if (_isDisposed) break;
-        await _triggerSilentBackgroundReval(item);
-        await Future.delayed(const Duration(milliseconds: 600));
-        changesMade = true;
-      }
+      if (batchResult != null && batchResult['status'] == 'success') {
+        final Map<String, dynamic> results = Map<String, dynamic>.from(batchResult['results'] ?? {});
+        bool changesMade = false;
 
-      if (changesMade) {
-        await _firestore
-            .collection('quantum_system')
-            .doc('watchlist')
-            .set({"items": _watchlist});
+        for (final item in _watchlist) {
+          final String sym = (item['symbol'] as String).replaceAll('.NS', '');
+          final result = results[sym];
+          if (result != null && result['status'] == 'success') {
+            final int oldScore = item['strict_score'] ?? 0;
+            final int newScore = result['strict_score'] ?? 0;
+            item['adx_score'] = (result['strict_score'] as num?)?.toDouble() ?? 0.0;
+            item['strict_score'] = newScore;
+            item['strict_signal'] = result['strict_signal'] ?? 'NONE';
+            item['strict_breakdown'] = result['strict_breakdown'] ?? result['breakdown'] ?? {};
+            item['ltp'] = (result['ltp'] as num?)?.toDouble() ?? 0.0;
+            _lastScanTime[sym] = DateTime.now();
+            if (oldScore != newScore) changesMade = true;
+          }
+        }
+
+        if (!_isDisposed) notifyListeners();
+
+        // Only write to Firestore if scores actually changed
+        if (changesMade) {
+          await _firestore
+              .collection('quantum_system')
+              .doc('watchlist')
+              .set({"items": _watchlist});
+        }
       }
     } catch (e) {
       debugPrint("Error refreshing watchlist: $e");
     } finally {
       _isRefreshingWatchlist = false;
-      notifyListeners();
+      if (!_isDisposed) notifyListeners();
     }
   }
 
   Future<void> _triggerSilentBackgroundReval(Map<String, dynamic> item) async {
+    final String sym = (item['symbol'] as String).replaceAll('.NS', '');
+    
+    // Debounce: skip if scanned within last 30 seconds
+    final lastScan = _lastScanTime[sym];
+    if (lastScan != null && DateTime.now().difference(lastScan).inSeconds < _scanDebounceSeconds) {
+      return;
+    }
+    
     try {
         final result = await _apiService.analyzeStock(item['symbol']);
         if (result != null && result['status'] == 'success') {
@@ -699,6 +784,7 @@ class TradingProvider with ChangeNotifier {
           item['strict_signal'] = result['strict_signal'] ?? 'NONE';
           item['strict_breakdown'] = result['strict_breakdown'] ?? {};
           item['ltp'] = (result['ltp'] as num?)?.toDouble() ?? 0.0;
+          _lastScanTime[sym] = DateTime.now();
           if (!_isDisposed) notifyListeners();
         }
     } catch (e) {
