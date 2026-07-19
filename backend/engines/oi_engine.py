@@ -163,19 +163,21 @@ class OIEngine:
             return True
             
         # Fix OI-2: Wire Max Pain filter
+        # BUG #8 FIX: Old code had INVERTED logic:
+        #   - Blocked BUY when price > max_pain (backwards: above max pain = gravitational pull DOWN, not a BUY block)
+        #   - Blocked SELL when price < max_pain (backwards: below max pain = gravitational pull UP, not a SELL block)
+        # Correct behavior: only block when PINNED to max pain (within 0.1%)
         if current_price:
             max_pain = self.calculate_max_pain(symbol)
             if max_pain > 0:
                 distance_pct = abs(current_price - max_pain) / current_price * 100
-                if distance_pct < 0.3:  # within 0.3% of max pain = avoid
-                    print(f"[OIEngine] Near max pain ({max_pain}). Skipping {side}.")
+                # Only block when price is PINNED very close to max pain (magnetic zone)
+                if distance_pct < 0.1:
+                    print(f"[OIEngine] Price pinned at max pain ({max_pain}). High magnetism. Skipping {side}.")
                     return False
-                if side == "BUY" and current_price > max_pain * 1.005:
-                    print(f"[OIEngine] Price above max pain. BUY risky.")
-                    return False
-                if side == "SELL" and current_price < max_pain * 0.995:
-                    print(f"[OIEngine] Price below max pain. SELL risky.")
-                    return False
+                # Informational warning only (not a block)
+                if distance_pct < 0.5:
+                    print(f"[OIEngine] Price near max pain ({max_pain}, {distance_pct:.2f}% away). Trade with caution.")
             
         # Fix OI-1: Asymmetric thresholds & Weekly Expiry Adjustment
         import datetime

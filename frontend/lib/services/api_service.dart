@@ -155,7 +155,9 @@ class ApiService {
       final url = ltp != null && ltp > 0
           ? '$baseUrl/api/scanner/scan?symbol=$symbol&ltp=$ltp'
           : '$baseUrl/api/scanner/scan?symbol=$symbol';
-      final response = await http.get(Uri.parse(url));
+      // FIX: 20-second timeout — backend yfinance fallback can hang without it
+      final response = await http.get(Uri.parse(url))
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         return json.decode(response.body);
       }

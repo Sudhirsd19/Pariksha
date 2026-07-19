@@ -131,11 +131,14 @@ class MTFEngine:
         3. Price above VWAP for bull (below for bear) on 5m
         At least 2 of 3 must agree.
 
+        For Neutral HTF: all 3 must agree in the same direction.
+        This is less restrictive than a hard block, but still filters low-confidence setups.
+
         Returns:
             True if LTF structure aligns with HTF, else False.
         """
-        if htf_trend == "Neutral":
-            return False
+        # BUG #1 FIX: Neutral no longer means hard-block.
+        # Instead, it requires full 3/3 LTF alignment.
 
         # Prefer 5m; fallback to 1m
         df = df_5m if (df_5m is not None and not df_5m.empty) else df_1m
@@ -151,17 +154,31 @@ class MTFEngine:
         vwap = last.get('vwap', 0)
         price = last.get('close', 0)
 
-        score = 0
+        if htf_trend == "Neutral":
+            # For neutral trend, check both directions and require full alignment
+            bull_score = 0
+            bear_score = 0
+            if ema9 and ema20:
+                if ema9 > ema20: bull_score += 1
+                elif ema9 < ema20: bear_score += 1
+            if rsi > 50: bull_score += 1
+            elif rsi < 50: bear_score += 1
+            if vwap > 0:
+                if price > vwap: bull_score += 1
+                elif price < vwap: bear_score += 1
+            # Require all 3 conditions aligned in one direction
+            return bull_score >= 3 or bear_score >= 3
 
+        score = 0
         if htf_trend == "Bullish":
-            if ema9 > ema20:
+            if ema9 and ema20 and ema9 > ema20:
                 score += 1
             if rsi > 50:
                 score += 1
             if vwap > 0 and price > vwap:
                 score += 1
         elif htf_trend == "Bearish":
-            if ema9 < ema20:
+            if ema9 and ema20 and ema9 < ema20:
                 score += 1
             if rsi < 50:
                 score += 1

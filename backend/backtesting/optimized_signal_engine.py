@@ -69,6 +69,7 @@ class OptimizedSignalEngine:
         
         # Volume indicators
         df['volume_ma'] = df['volume'].rolling(20).mean()
+        df['vol_ma20'] = df['volume_ma']
         df['volume_ratio'] = df['volume'] / (df['volume_ma'] + 1)
         
         return df
@@ -101,13 +102,10 @@ class OptimizedSignalEngine:
             
         try:
             # Parse timestamp
-            if isinstance(timestamp, str):
-                dt = pd.to_datetime(timestamp, utc=True).tz_convert('Asia/Kolkata')
+            dt = pd.to_datetime(timestamp)
+            if dt.tz is None:
+                dt = dt.tz_localize('Asia/Kolkata')
             else:
-                # Already a Timestamp
-                dt = pd.to_datetime(timestamp)
-                if dt.tz is None:
-                    dt = dt.tz_localize('UTC')
                 dt = dt.tz_convert('Asia/Kolkata')
             
             hour = dt.hour

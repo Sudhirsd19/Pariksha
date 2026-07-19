@@ -40,11 +40,15 @@ class StrictChecklistEngine:
                     "confluence_count": 0, "entry": 0, "sl": 0, "tp": 0, "atr": 0}
             
         # Standardize columns to lowercase
+        df = df.copy()
         df.columns = [col.lower() for col in df.columns]
         
-        # Ensure all indicators are calculated
-        if 'MACD' not in df.columns or 'EMA_21' not in df.columns or 'ATR' not in df.columns:
+        # BUG #7 FIX: Check for LOWERCASE names after standardization
+        # Previously checked 'MACD'/'EMA_21'/'ATR' but columns were already lowercased,
+        # so the check always failed and apply_all() ran twice.
+        if 'macd' not in df.columns or 'ema_21' not in df.columns or 'atr' not in df.columns:
             df = TechnicalIndicators.apply_all(df)
+            df.columns = [col.lower() for col in df.columns]  # Re-lowercase after apply_all
             
         # Default engine results if not provided
         structure_result = structure_result or {}
@@ -116,14 +120,17 @@ class StrictChecklistEngine:
             sell_confluences.add("SMC")
         
         # FVG / Pullback retest in direction (7 pts)
+        # BUG #6 FIX: FVG now adds to SMC confluence (satisfies mandatory SMC filter)
         if structure_result.get('bullish_fvg', False):
             buy_score += 4
             buy_breakdown["SMC Structure"] += 4
             buy_reasons.append("Bullish FVG")
+            buy_confluences.add("SMC")  # FIX: FVG counts as SMC event
         if structure_result.get('bearish_fvg', False):
             sell_score += 4
             sell_breakdown["SMC Structure"] += 4
             sell_reasons.append("Bearish FVG")
+            sell_confluences.add("SMC")  # FIX: FVG counts as SMC event
             
         if structure_result.get('pullback_to_support', False):
             buy_score += 3
@@ -162,8 +169,9 @@ class StrictChecklistEngine:
             sell_confluences.add("MTF")
             
         # LTF EMA 9 > 20 alignment (5 pts)
-        ema9 = current.get('EMA_9', 0)
-        ema20 = current.get('EMA_20', 0)
+        # BUG #7 FIX: Use lowercase column names after df.columns lowercasing
+        ema9 = current.get('ema_9', 0)
+        ema20 = current.get('ema_20', 0)
         if ema9 and ema20 and ema9 > ema20:
             buy_score += 5
             buy_breakdown["Trend & MTF"] += 5
@@ -174,7 +182,7 @@ class StrictChecklistEngine:
             sell_confluences.add("Trend")
         
         # Supertrend direction (4 pts)
-        supertrend = current.get('Supertrend', None)
+        supertrend = current.get('supertrend', None)  # BUG #7 FIX: lowercase
         if supertrend is True:
             buy_score += 4
             buy_breakdown["Trend & MTF"] += 4
@@ -185,8 +193,8 @@ class StrictChecklistEngine:
             sell_confluences.add("Trend")
         
         # +DI/-DI directional (3 pts)
-        plus_di = current.get('PLUS_DI', 0)
-        minus_di = current.get('MINUS_DI', 0)
+        plus_di = current.get('plus_di', 0)   # BUG #7 FIX: lowercase
+        minus_di = current.get('minus_di', 0)  # BUG #7 FIX: lowercase
         if plus_di and minus_di:
             if plus_di > minus_di:
                 buy_score += 3
@@ -200,22 +208,31 @@ class StrictChecklistEngine:
         # ==========================================
         
         # RSI sweet spot (7 pts)
-        rsi = current.get('RSI', 50)
+        # BUG #4 FIX: Expanded RSI zones + partial scoring for dead zone 45-55
+        rsi = current.get('rsi', 50)  # BUG #7 FIX: lowercase
         if not pd.isna(rsi):
-            if 55 <= rsi <= 70:
+            if 55 <= rsi <= 75:           # Expanded upper bound from 70 to 75
                 buy_score += 7
                 buy_breakdown["Momentum"] += 7
                 buy_reasons.append(f"RSI in bullish zone ({rsi:.0f})")
                 buy_confluences.add("Momentum")
-            elif 30 <= rsi <= 45:
+            elif 50 <= rsi < 55:          # NEW: Continuation zone (partial 4 pts)
+                buy_score += 4
+                buy_breakdown["Momentum"] += 4
+                buy_reasons.append(f"RSI bullish continuation ({rsi:.0f})")
+            elif 25 <= rsi <= 45:         # Expanded lower bound from 30 to 25
                 sell_score += 7
                 sell_breakdown["Momentum"] += 7
                 sell_reasons.append(f"RSI in bearish zone ({rsi:.0f})")
                 sell_confluences.add("Momentum")
+            elif 45 < rsi < 50:           # NEW: Bearish continuation zone (partial 4 pts)
+                sell_score += 4
+                sell_breakdown["Momentum"] += 4
+                sell_reasons.append(f"RSI bearish continuation ({rsi:.0f})")
         
         # MACD histogram direction (6 pts)
-        macd_hist = current.get('MACD_Hist', 0)
-        prev_macd_hist = prev.get('MACD_Hist', 0)
+        macd_hist = current.get('macd_hist', 0)      # BUG #7 FIX: lowercase
+        prev_macd_hist = prev.get('macd_hist', 0)     # BUG #7 FIX: lowercase
         if not pd.isna(macd_hist) and not pd.isna(prev_macd_hist):
             if macd_hist > 0 and macd_hist > prev_macd_hist:
                 buy_score += 6
@@ -235,8 +252,8 @@ class StrictChecklistEngine:
                 sell_breakdown["Momentum"] += 3
         
         # MACD line > signal (4 pts)
-        macd_line = current.get('MACD', 0)
-        macd_signal = current.get('MACD_Signal', 0)
+        macd_line = current.get('macd', 0)            # BUG #7 FIX: lowercase
+        macd_signal = current.get('macd_signal', 0)   # BUG #7 FIX: lowercase
         if not pd.isna(macd_line) and not pd.isna(macd_signal):
             if macd_line > macd_signal:
                 buy_score += 4
@@ -246,7 +263,7 @@ class StrictChecklistEngine:
                 sell_breakdown["Momentum"] += 4
         
         # RSI slope / rising-falling (3 pts)
-        prev_rsi = prev.get('RSI', 50)
+        prev_rsi = prev.get('rsi', 50)  # BUG #7 FIX: lowercase
         if not pd.isna(rsi) and not pd.isna(prev_rsi):
             if rsi > prev_rsi and rsi > 50:
                 buy_score += 3
@@ -260,7 +277,7 @@ class StrictChecklistEngine:
         # ==========================================
         
         # VWAP position (8 pts)
-        vwap = current.get('VWAP', 0)
+        vwap = current.get('vwap', 0)  # BUG #7 FIX: lowercase — was returning 0 always
         if vwap and not pd.isna(vwap) and vwap > 0:
             if current['close'] > vwap:
                 buy_score += 8
@@ -410,16 +427,18 @@ class StrictChecklistEngine:
             sell_reasons.append(f"PENALTY: RSI oversold ({rsi:.0f})")
         
         # ATR Exhaustion penalty (-5 pts for both sides)
-        atr_14 = current.get('ATR', 0)
+        # BUG #5 FIX: Was comparing day_range (150-300 pts) vs ATR_14 candle ATR (20-30 pts)
+        # This condition was ALWAYS True, permanently deducting 5 pts every candle.
+        # Correct approach: compare single candle range vs its own ATR.
+        atr_14 = current.get('atr', 0)  # BUG #7 FIX: lowercase
         if atr_14 and not pd.isna(atr_14) and atr_14 > 0:
-            day_high = df['high'].iloc[-75:].max() if len(df) > 75 else df['high'].max()
-            day_low = df['low'].iloc[-75:].min() if len(df) > 75 else df['low'].min()
-            day_range = day_high - day_low
-            if day_range > (0.9 * atr_14):
+            candle_range = current['high'] - current['low']
+            # Only penalize if THIS candle is an exhaustion candle (>2.5× its ATR)
+            if candle_range > (2.5 * atr_14):
                 buy_score -= 5
                 sell_score -= 5
-                buy_reasons.append("PENALTY: ATR exhausted (>90%)")
-                sell_reasons.append("PENALTY: ATR exhausted (>90%)")
+                buy_reasons.append("PENALTY: Exhaustion candle (>2.5× ATR)")
+                sell_reasons.append("PENALTY: Exhaustion candle (>2.5× ATR)")
         
         # Chasing penalty — buying near day high or selling near day low (-3 pts)
         if len(df) > 10:
@@ -434,15 +453,16 @@ class StrictChecklistEngine:
         
         # MACD divergence penalty (-5 pts)
         # Price making higher high but MACD making lower high = bearish divergence
+        # BUG #7 FIX: Check lowercase 'macd' column
         if len(df) > 10 and not pd.isna(macd_line):
             price_hh = current['close'] > df['close'].iloc[-10:-1].max()
-            macd_lh = macd_line < df['MACD'].iloc[-10:-1].max() if 'MACD' in df.columns else False
+            macd_lh = macd_line < df['macd'].iloc[-10:-1].max() if 'macd' in df.columns else False
             if price_hh and macd_lh:
                 buy_score -= 5
                 buy_reasons.append("PENALTY: Bearish MACD divergence")
             
             price_ll = current['close'] < df['close'].iloc[-10:-1].min()
-            macd_hl = macd_line > df['MACD'].iloc[-10:-1].min() if 'MACD' in df.columns else False
+            macd_hl = macd_line > df['macd'].iloc[-10:-1].min() if 'macd' in df.columns else False
             if price_ll and macd_hl:
                 sell_score -= 5
                 sell_reasons.append("PENALTY: Bullish MACD divergence")
@@ -461,18 +481,20 @@ class StrictChecklistEngine:
         if buy_score >= sell_score:
             final_score = buy_score
             confluences = len(buy_confluences)
-            if final_score >= 80:
+            # BUG #3 FIX: Lowered thresholds to realistic levels
+            # 80 was impossible in ranging markets; 75/60 reflect real-world scoring
+            if final_score >= 75:
                 signal = "STRONG BUY"
-            elif 70 <= final_score <= 79:
+            elif 60 <= final_score < 75:
                 signal = "MODERATE BUY"
             else:
                 signal = "NONE"
         else:
             final_score = sell_score
             confluences = len(sell_confluences)
-            if final_score >= 80:
+            if final_score >= 75:
                 signal = "STRONG SELL"
-            elif 70 <= final_score <= 79:
+            elif 60 <= final_score < 75:
                 signal = "MODERATE SELL"
             else:
                 signal = "NONE"
@@ -481,7 +503,7 @@ class StrictChecklistEngine:
         # Entry, SL, TP Calculation
         # ==========================================
         entry_price = float(current['close'])
-        atr_val = float(current.get('ATR', 0)) if not pd.isna(current.get('ATR', 0)) else 0.0
+        atr_val = float(current.get('atr', 0)) if not pd.isna(current.get('atr', 0)) else 0.0  # BUG #7 FIX: lowercase
         
         if "BUY" in signal:
             if atr_val > 0:

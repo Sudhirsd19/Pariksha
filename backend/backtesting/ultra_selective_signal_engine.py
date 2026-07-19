@@ -68,8 +68,8 @@ class UltraSelectiveSignalEngine:
         df['volume_trend'] = df['volume_ma20'] / df['volume_ma50']
         
         # Support/Resistance
-        df['resistance_10'] = df['high'].rolling(10, center=True).max()
-        df['support_10'] = df['low'].rolling(10, center=True).min()
+        df['resistance_10'] = df['high'].rolling(10, center=False).max()
+        df['support_10'] = df['low'].rolling(10, center=False).min()
         df['resistance_20'] = df['high'].rolling(20).max()
         df['support_20'] = df['low'].rolling(20).min()
         
