@@ -164,13 +164,13 @@ class WalkForwardAnalyzer:
         avg_wr_dec  = sum(w.win_rate_decay for w in valid) / len(valid) if valid else 0.0
 
         if avg_wfe >= 0.7:
-            verdict = "✅ STABLE — WFE ≥ 0.7: Strategy shows good OOS performance"
+            verdict = "STABLE - WFE >= 0.7: Strategy shows good OOS performance"
         elif avg_wfe >= 0.5:
-            verdict = "⚠️ MARGINAL — WFE ≥ 0.5: Some OOS degradation detected"
+            verdict = "MARGINAL - WFE >= 0.5: Some OOS degradation detected"
         else:
-            verdict = "❌ UNSTABLE — WFE < 0.5: Significant IS→OOS performance decay"
+            verdict = "UNSTABLE - WFE < 0.5: Significant IS -> OOS performance decay"
 
-        logger.info("Phase 9 WF: avg_WFE=%.3f stability=%.1f%% — %s", avg_wfe, avg_stab, verdict)
+        logger.info("Phase 9 WF: avg_WFE=%.3f stability=%.1f%% - %s", avg_wfe, avg_stab, verdict)
         return WalkForwardResult(
             windows=windows,
             avg_wfe=round(avg_wfe, 4),

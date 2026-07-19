@@ -156,9 +156,9 @@ class DeterministicReplayChecker:
         result.differences = diffs
         result.all_identical = len(diffs) == 0
         result.verdict = (
-            "✅ PASS — All 3 runs produced identical results. Engine is fully deterministic."
+            "PASS — All 3 runs produced identical results. Engine is fully deterministic."
             if result.all_identical else
-            f"❌ NON-DETERMINISTIC BEHAVIOUR DETECTED — {len(diffs)} difference(s) found"
+            f"FAIL — NON-DETERMINISTIC BEHAVIOUR DETECTED — {len(diffs)} difference(s) found"
         )
 
         logger.info("Phase 10: %s", result.verdict)
@@ -171,7 +171,7 @@ class DeterministicReplayChecker:
             "",
             f"## Verdict: {result.verdict}",
             "",
-            f"**Runs performed**: {result.N_RUNS}",
+            f"**Runs performed**: {result.n_runs}",
             "",
             "## Check Results",
             "",

@@ -2414,8 +2414,9 @@ async def trading_loop():
                     continue
                 elif side != "NONE" and not ltf_entry_valid and htf_trend == "Neutral":
                     # Neutral HTF: require higher score instead of hard block
-                    if current_score < 65:
-                        print(f"[MTF Filter] {symbol} {side}: Neutral HTF, score {current_score}<65. Skipping.")
+                    curr_sc = signal_data.get('strict_score', 0)
+                    if curr_sc < 65:
+                        print(f"[MTF Filter] {symbol} {side}: Neutral HTF, score {curr_sc}<65. Skipping.")
                         continue
                 
                 # Filter 2: HTF trend vs trade direction mismatch

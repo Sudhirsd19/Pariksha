@@ -45,8 +45,8 @@ def _print_phase_header(n: int, name: str) -> None:
 
 
 def _print_phase_result(status: str, detail: str = "") -> None:
-    icon = {"PASS": "✅", "FAIL": "❌", "DONE": "✅", "SKIP": "⏭️", "ERROR": "💥"}.get(status, "ℹ️")
-    print(f"  {icon} {status}" + (f" — {detail}" if detail else ""))
+    icon = {"PASS": "[PASS]", "FAIL": "[FAIL]", "DONE": "[DONE]", "SKIP": "[SKIP]", "ERROR": "[ERROR]"}.get(status, "[INFO]")
+    print(f"  {icon} {status}" + (f" - {detail}" if detail else ""))
 
 
 def run_all_phases(
@@ -89,10 +89,10 @@ def run_all_phases(
     saved_paths:   Dict[str, Any] = {}
     t_start = time.perf_counter()
 
-    print("\n" + "█" * 70)
-    print("  QUANTUM INDEX — INSTITUTIONAL VALIDATION FRAMEWORK")
+    print("\n" + "=" * 70)
+    print("  QUANTUM INDEX - INSTITUTIONAL VALIDATION FRAMEWORK")
     print("  12-Phase Audit | Strategy Logic: UNTOUCHED")
-    print("█" * 70)
+    print("=" * 70)
 
     # ── PHASE 0: Data Integrity ───────────────────────────────────────────────
     _print_phase_header(0, "Data Integrity Audit")
@@ -112,17 +112,16 @@ def run_all_phases(
             f"{p0_report.total_rows:,} rows, {p0_report.trading_rows:,} trading rows"
         )
         if not p0_report.passed and skip_on_data_failure:
-            print("\n  ⛔ Critical data issues — validation halted.")
+            print("\n  [HALT] Critical data issues - validation halted.")
             print(f"  Review: {p0_path}")
             return {"status": "HALTED", "reason": "Phase 0 critical failure", **phase_outputs}
     except Exception as exc:
         _print_phase_result("ERROR", str(exc))
         logger.exception("Phase 0 failed")
 
-    # ── PRIMARY BACKTEST RUN ──────────────────────────────────────────────────
-    print(f"\n{'─'*70}")
+    print(f"\n{'-'*70}")
     print("  Running primary backtest...")
-    print(f"{'─'*70}")
+    print(f"{'-'*70}")
     try:
         kw = dict(engine_kwargs)
         kw["verbose"] = False
@@ -144,12 +143,12 @@ def run_all_phases(
 
         n_trades = len(result.get("trades", []))
         m = result.get("metrics", {})
-        print(f"  ✅ Backtest complete: {n_trades} trades | "
+        print(f"  [DONE] Backtest complete: {n_trades} trades | "
               f"Win={m.get('win_rate', 0):.1f}% | PF={m.get('profit_factor', 0):.3f} | "
-              f"Net=₹{m.get('net_profit', 0):,.2f}")
+              f"Net=Rs {m.get('net_profit', 0):,.2f}")
     except Exception as exc:
         logger.exception("Primary backtest failed")
-        print(f"  ❌ Primary backtest failed: {exc}")
+        print(f"  [ERROR] Primary backtest failed: {exc}")
         return {"status": "ERROR", "reason": str(exc)}
 
     initial_capital = float(engine_kwargs.get("initial_capital", 100_000.0))
@@ -294,8 +293,8 @@ def run_all_phases(
         _print_phase_result(
             "DONE",
             f"P(profit)={mc_result.prob_profit:.1f}% | "
-            f"Median=₹{mc_result.median_final:,.0f} | "
-            f"P5=₹{mc_result.p5_final:,.0f} | P95=₹{mc_result.p95_final:,.0f}"
+            f"Median=Rs {mc_result.median_final:,.0f} | "
+            f"P5=Rs {mc_result.p5_final:,.0f} | P95=Rs {mc_result.p95_final:,.0f}"
         )
     except Exception as exc:
         logger.exception("Phase 8 failed")
@@ -353,7 +352,7 @@ def run_all_phases(
             chart_index = p11_gen.generate_index(p11_paths, output_dir)
             phase_outputs["chart_index_path"] = chart_index
             saved_paths["phase11"] = str(chart_index)
-            _print_phase_result("DONE", f"{len(p11_paths)} charts → {charts_dir}")
+            _print_phase_result("DONE", f"{len(p11_paths)} charts -> {charts_dir}")
         except Exception as exc:
             logger.exception("Phase 11 failed")
             _print_phase_result("ERROR", str(exc))
@@ -373,17 +372,17 @@ def run_all_phases(
         )
         p12_path = builder.save(report_text, output_dir)
         saved_paths["phase12_final"] = str(p12_path)
-        _print_phase_result("DONE", f"Final report → {p12_path.name}")
+        _print_phase_result("DONE", f"Final report -> {p12_path.name}")
     except Exception as exc:
         logger.exception("Phase 12 failed")
         _print_phase_result("ERROR", str(exc))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = time.perf_counter() - t_start
-    print(f"\n{'█'*70}")
+    print(f"\n{'='*70}")
     print(f"  VALIDATION COMPLETE in {elapsed:.1f}s")
     print(f"  All reports saved to: {output_dir.resolve()}")
-    print(f"{'█'*70}\n")
+    print(f"{'='*70}\n")
 
     print("  Reports:")
     for phase, path in saved_paths.items():

@@ -291,7 +291,7 @@ class ExecutionValidator:
         fails = []
         for n, t in enumerate(trades, 1):
             sl      = float(t.get("sl", 0))
-            entry   = float(t.get("effective_entry", 0))
+            entry   = float(t.get("entry", t.get("effective_entry", 0)))
             signal  = t.get("signal", "")
             net_pnl = float(t.get("net_pnl", 0))
             # If trailing SL moved, it should not move against trade direction
