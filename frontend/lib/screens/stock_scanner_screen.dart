@@ -1699,8 +1699,10 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
       _hasScanned = false;
     });
     try {
+      if (!mounted) return;
       final provider = Provider.of<TradingProvider>(context, listen: false);
       final res = await provider.smartScreener(_minPrice, _maxPrice);
+      if (!mounted) return;
       if (res != null && res['status'] == 'success') {
         setState(() {
           _results = List<Map<String, dynamic>>.from(
@@ -1713,9 +1715,12 @@ class _SmartScreenerCardState extends State<_SmartScreenerCard> {
         setState(() => _error = "Scan failed. Backend offline ya market band hai.");
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = "Error: $e");
     } finally {
-      setState(() => _isScanning = false);
+      if (mounted) {
+        setState(() => _isScanning = false);
+      }
     }
   }
 

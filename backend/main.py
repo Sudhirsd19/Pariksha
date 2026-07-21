@@ -1552,8 +1552,8 @@ async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
     except Exception as e:
         print(f"[Bulk Scan] Fast price filter failed: {e}")
         
-    # Cap to max 30 stocks to prevent timeouts
-    scan_list = affordable_symbols[:30]
+    # Cap to max 15 stocks to prevent frontend timeouts
+    scan_list = affordable_symbols[:15]
 
     # Fetch batch market depth for all selected stocks to avoid rate limit issues
     market_depths = {}
@@ -1578,7 +1578,7 @@ async def bulk_scan_signals(min_price: float = 0.0, max_price: float = 3000.0):
         except Exception as e:
             print(f"[Bulk Scan] Failed to fetch batch market depth: {e}")
 
-    sem = asyncio.Semaphore(3)  # Max 3 concurrent to respect API rate limits
+    sem = asyncio.Semaphore(5)  # Max 5 concurrent — balanced between speed and API rate limits
     
     async def scan_one(sym):
         async with sem:
@@ -1757,7 +1757,7 @@ def background_save_and_notify(signal_data, side, symbol, qty, trading_symbol, p
     )
 
 @app.post("/execute-stock-trade")
-async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float = 0.0, background_tasks: BackgroundTasks = None):
+async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float = 0.0, background_tasks: BackgroundTasks = None, trusted_score: int = None):
     # ── MARKET HOURS GUARD ─────────────────────────────────────────────────
     # Intraday entries only allowed: Mon-Fri, 9:15 AM – 2:30 PM IST
     # After 2:30 PM: less than 40 min left → auto sq-off at 3:10 PM → bad RRR
@@ -1872,15 +1872,19 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         except Exception as e:
             print(f"[Execute Stock Trade] Failed to fetch market depth for {base_symbol}: {e}")
 
-    strict_result = await asyncio.to_thread(
-        strict_checklist_engine.evaluate, 
-        ticker, 
-        df.copy(), 
-        is_nifty_bullish=True, # Assume true for manual execution if not fetched
-        market_depth_buyer_ratio=market_depth_buyer_ratio
-    )
-    
-    strict_score = strict_result.get("strict_score", 0)
+    # FIX: Skip redundant re-evaluation when called from auto-execution (score already validated)
+    if trusted_score is not None:
+        strict_score = trusted_score
+    else:
+        strict_result = await asyncio.to_thread(
+            strict_checklist_engine.evaluate, 
+            ticker, 
+            df.copy(), 
+            is_nifty_bullish=True, # Assume true for manual execution if not fetched
+            market_depth_buyer_ratio=market_depth_buyer_ratio
+        )
+        
+        strict_score = strict_result.get("strict_score", 0)
 
     # BUG-6 FIX: Enforce minimum score guard for both BUY and SELL.
     # Score < 20/100 means no single technical or fundamental condition is met.
@@ -1897,7 +1901,21 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         }
         
     trading_symbol = f"{base_symbol}-EQ"
-    price = ltp if ltp > 0 else (df['close'].iloc[-1] if 'close' in df.columns else df['Close'].iloc[-1])
+    
+    # FIX: Fetch real-time LTP from broker to avoid stale scanner prices
+    real_ltp = 0.0
+    if broker.session and token:
+        try:
+            real_ltp = await asyncio.to_thread(broker.get_market_data, exchange, base_symbol, token)
+        except Exception:
+            pass
+    
+    if real_ltp > 0:
+        price = real_ltp
+    elif ltp > 0:
+        price = ltp
+    else:
+        price = float(df['close'].iloc[-1]) if 'close' in df.columns else float(df['Close'].iloc[-1])
     
     if price <= 0:
         return {"status": "error", "message": "Invalid stock price"}
@@ -1972,22 +1990,22 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
     if ws_manager:
         ws_manager.subscribe_token(token, 1) # 1 = NSE Equity Cash
     
+    # FIX: Save trade SYNCHRONOUSLY to guarantee it's registered in TradeManager
+    # before returning. Only defer the push notification to background.
+    doc_id = db_manager.save_signal(signal_data)
+    if doc_id:
+        trade_manager.add_trade(signal_data, doc_id)
+    
+    # Defer only the push notification to background
+    notification_title = f"STOCK ALGO: {side} {symbol}"
+    notification_body = f"Executed {qty} shares of {trading_symbol} @ Rs.{price:.2f}. SL: {signal_data['sl']:.2f}, TP: {signal_data['tp']:.2f}"
     if background_tasks:
-        background_tasks.add_task(
-            background_save_and_notify,
-            signal_data,
-            side,
-            symbol,
-            qty,
-            trading_symbol,
-            price
-        )
+        background_tasks.add_task(send_push_notification, notification_title, notification_body)
     else:
-        # Fallback for direct function calls
-        asyncio.create_task(asyncio.to_thread(
-            background_save_and_notify,
-            signal_data, side, symbol, qty, trading_symbol, price
-        ))
+        try:
+            send_push_notification(notification_title, notification_body)
+        except Exception:
+            pass
     
     return {
         "status": "success",
@@ -2023,6 +2041,13 @@ async def check_and_trigger_auto_execution(symbol: str, side: str, ltp: float, s
         if active_sym == symbol:
             print(f"[AutoExecution] Blocked: Active trade already exists for {symbol}")
             return
+    
+    # FIX: Also check in-memory signals for OPEN trades (covers trades not yet in trade_manager)
+    for sig in signals:
+        sig_sym = sig.get("symbol", "").upper().replace("-EQ", "")
+        if sig_sym == symbol and sig.get("status") != "CLOSED":
+            print(f"[AutoExecution] Blocked: Open signal already exists for {symbol}")
+            return
             
     # Check if closed today already
     ist_tz = timezone(timedelta(hours=5, minutes=30))
@@ -2054,7 +2079,8 @@ async def check_and_trigger_auto_execution(symbol: str, side: str, ltp: float, s
         
     print(f"[AutoExecution] Triggering auto trade for {symbol} - Side: {side}, Qty: {qty}, LTP: {ltp}, Score: {strict_score}")
     try:
-        res = await execute_stock_trade(symbol=symbol, side=side, qty=qty, ltp=ltp)
+        # FIX: Pass trusted_score to skip redundant re-evaluation
+        res = await execute_stock_trade(symbol=symbol, side=side, qty=qty, ltp=ltp, trusted_score=strict_score)
         if res and res.get("status") == "success":
             print(f"[AutoExecution] Success: Order placed for {symbol}")
             send_push_notification(
