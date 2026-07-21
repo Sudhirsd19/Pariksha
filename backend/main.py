@@ -1957,9 +1957,7 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         "entry": price,
         "actual_entry": price,
         "sl": sl,
-        "tp": tp,
         "reason": f"ALGO EQUITY {side} - 100-Point Score: {strict_score}",
-        "is_paper": is_paper_trading,
         "timestamp": int(time.time() * 1000),
         "token": token,
         "qty": qty,
@@ -1968,8 +1966,12 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         "atr": atr
     }
     
+    settings_curr = db_manager.get_settings() or {}
+    paper_mode = settings_curr.get("paper_trading", is_paper_trading)
+    signal_data["is_paper"] = paper_mode
+    
     order_id = None
-    if not is_paper_trading:
+    if not paper_mode:
         if not broker.session:
             broker.login()
         order_id = broker.place_order(
@@ -1983,6 +1985,9 @@ async def execute_stock_trade(symbol: str, side: str, qty: int = 1, ltp: float =
         )
         if not order_id:
             return {"status": "error", "message": "Broker execution failed"}
+        signal_data["order_id"] = order_id
+    else:
+        order_id = f"VIRTUAL_{int(time.time())}"
         signal_data["order_id"] = order_id
         
     risk_manager.record_entry(side)
@@ -2095,11 +2100,16 @@ async def check_and_trigger_auto_execution(symbol: str, side: str, ltp: float, s
 async def trading_loop():
     global trading_active, ws_manager
     
-    # Always ensure a fresh session on toggle
+    # Try broker login, but do not stop paper trading if login fails
     success = broker.login()
-    if not success:
+    settings_init = db_manager.get_settings() or {}
+    paper_mode_init = settings_init.get("paper_trading", is_paper_trading)
+    if not success and not paper_mode_init:
+        print("[TradingLoop] Angel One Login failed and Paper Trading is disabled. Stopping engine.")
         trading_active = False
         return
+    elif not success:
+        print("[TradingLoop] Angel One Login failed, but Paper Trading is ENABLED. Continuing in Paper Trading fallback mode.")
     
     # Refresh/Connect WebSocket with fresh tokens using helper
     await asyncio.to_thread(ensure_websocket_connected)
@@ -2267,14 +2277,26 @@ async def trading_loop():
                     print(f"[Loop] Options chain OI update failed for {symbol}: {e}")
 
                 # API Rate Limit (3 req/sec) Management: Fetch sequentially with delay
-                df_1m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_MINUTE", 2, exchange)
+                df_1m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_MINUTE", 2, exchange) if broker.session else None
                 await asyncio.sleep(0.4)
-                df_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange)
+                df_5m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIVE_MINUTE", 5, exchange) if broker.session else None
                 await asyncio.sleep(0.4)
-                df_15m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIFTEEN_MINUTE", 10, exchange)
+                df_15m = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "FIFTEEN_MINUTE", 10, exchange) if broker.session else None
                 await asyncio.sleep(0.4)
-                df_1h = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_HOUR", 30, exchange)
+                df_1h = await asyncio.to_thread(fetch_historical_data, broker.smart_api, token, "ONE_HOUR", 30, exchange) if broker.session else None
                 await asyncio.sleep(0.4)
+                
+                # Fallback to yfinance if broker data is missing (e.g. session expired or paper trading without broker login)
+                if (df_1m is None or df_1m.empty or df_5m is None or df_5m.empty):
+                    yf_ticker = "^NSEI" if symbol == "NIFTY" else ("^NSEBANK" if symbol == "BANKNIFTY" else f"{symbol}.NS")
+                    try:
+                        import yfinance as yf
+                        if df_5m is None or df_5m.empty:
+                            df_5m = await asyncio.to_thread(lambda: yf.Ticker(yf_ticker).history(period="5d", interval="5m"))
+                        if df_1m is None or df_1m.empty:
+                            df_1m = await asyncio.to_thread(lambda: yf.Ticker(yf_ticker).history(period="1d", interval="1m"))
+                    except Exception as yf_err:
+                        print(f"[Loop] yfinance fallback failed for {symbol}: {yf_err}")
                 
                 # BUG #2 FIX: Previously ANY df being None would skip the entire symbol.
                 # 15m and 1h are optional — MTF engine handles None gracefully.
@@ -2618,8 +2640,9 @@ async def trading_loop():
                             'original_signal': side,
                         })
                         
+                    paper_mode = settings.get("paper_trading", is_paper_trading)
                     order_id = None
-                    if is_paper_trading:
+                    if paper_mode:
                         order_id = f"VIRTUAL_{int(time.time())}"
                     else:
                         order_id = broker.place_order(trade_symbol, trade_token, qty, trade_side, signal_data['entry'] if instrument_type == "FUTURES" else option_premium)
